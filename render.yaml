@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: grain-ticket-scanner-api
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    plan: starter
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 3001
+      - key: GOOGLE_SHEET_TAB
+        value: Form Responses 1
+      - key: DROPDOWN_CACHE_MS
+        value: 60000
