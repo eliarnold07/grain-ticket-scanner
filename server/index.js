@@ -5,6 +5,7 @@ import multer from 'multer';
 import OpenAI from 'openai';
 import { google } from 'googleapis';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 
 const app = express();
 const upload = multer({
@@ -19,6 +20,8 @@ const sheetId = process.env.GOOGLE_SHEET_ID;
 const sheetTab = process.env.GOOGLE_SHEET_TAB || 'Form Responses 1';
 const serviceAccountKeyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
 const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+const googleClientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 const allowedOrigin = process.env.CORS_ORIGIN || '*';
 const dropdownCacheMs = Number(process.env.DROPDOWN_CACHE_MS || 60000);
 
@@ -182,7 +185,35 @@ function scanUpload(req, res, next) {
   });
 }
 
+function googleCredentialSource() {
+  if (googleClientEmail && googlePrivateKey) {
+    return 'environment variables';
+  }
+
+  if (serviceAccountJson) {
+    return 'GOOGLE_SERVICE_ACCOUNT_JSON';
+  }
+
+  if (serviceAccountKeyFile && existsSync(serviceAccountKeyFile)) {
+    return 'local JSON file';
+  }
+
+  return 'missing';
+}
+
 function getGoogleAuth() {
+  if (googleClientEmail && googlePrivateKey) {
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+
+    return new google.auth.GoogleAuth({
+      credentials: {
+        client_email: googleClientEmail,
+        private_key: privateKey
+      },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+  }
+
   if (serviceAccountJson) {
     const credentials = JSON.parse(serviceAccountJson);
     return new google.auth.GoogleAuth({
@@ -191,14 +222,14 @@ function getGoogleAuth() {
     });
   }
 
-  if (serviceAccountKeyFile) {
+  if (serviceAccountKeyFile && existsSync(serviceAccountKeyFile)) {
     return new google.auth.GoogleAuth({
       keyFile: serviceAccountKeyFile,
       scopes: ['https://www.googleapis.com/auth/spreadsheets']
     });
   }
 
-  throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_KEY_FILE in environment.');
+  throw new Error('Missing Google credentials. Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY in production, or GOOGLE_SERVICE_ACCOUNT_KEY_FILE locally.');
 }
 
 function getSheetsClient() {
@@ -500,4 +531,5 @@ app.post('/api/submit-ticket', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Grain Ticket Scanner API running on port ${port}`);
+  console.log(`Google Sheets credentials source: ${googleCredentialSource()}`);
 });

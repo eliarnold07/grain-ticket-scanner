@@ -81,6 +81,8 @@ Required backend variables:
 OPENAI_API_KEY=your_openai_api_key_here
 GOOGLE_SHEET_ID=1yujW3z162d55zZou-cLZLkp8_ve1-gbqI2MjVRP_fWE
 GOOGLE_SHEET_TAB=Form Responses 1
+GOOGLE_CLIENT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 CORS_ORIGIN=http://localhost:5173
 ```
 
@@ -90,7 +92,7 @@ Use this locally:
 GOOGLE_SERVICE_ACCOUNT_KEY_FILE=./google-service-account.json
 ```
 
-Use this on Render instead of a local file:
+The backend prefers `GOOGLE_CLIENT_EMAIL` and `GOOGLE_PRIVATE_KEY`. It only falls back to `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` when that local file exists. You can also use this hosted fallback if you prefer pasting the whole service account JSON:
 
 ```text
 GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
@@ -172,16 +174,25 @@ VITE_API_URL=http://localhost:3001
    OPENAI_API_KEY
    GOOGLE_SHEET_ID
    GOOGLE_SHEET_TAB
-   GOOGLE_SERVICE_ACCOUNT_JSON
+   GOOGLE_CLIENT_EMAIL
+   GOOGLE_PRIVATE_KEY
    CORS_ORIGIN
    DROPDOWN_CACHE_MS
    ```
 
-5. For `GOOGLE_SERVICE_ACCOUNT_JSON`, paste the full service account JSON as one environment variable value.
+5. For `GOOGLE_CLIENT_EMAIL`, use the `client_email` value from your service account JSON.
 
-6. Set `CORS_ORIGIN` to your Netlify site URL after Netlify is created.
+6. For `GOOGLE_PRIVATE_KEY`, use the `private_key` value from your service account JSON. Keep the `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----` text. If the key contains `\n`, leave those escaped newline characters in place.
 
-7. Deploy and copy the Render service URL.
+7. Set `CORS_ORIGIN` to your Netlify site URL after Netlify is created.
+
+8. Deploy and copy the Render service URL.
+
+On startup, Render logs should say:
+
+```text
+Google Sheets credentials source: environment variables
+```
 
 ## Netlify Frontend Deployment
 
