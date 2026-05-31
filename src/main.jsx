@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
+const MAX_IMAGE_DIMENSION = 1800;
+const JPEG_QUALITY = 0.82;
 
 const fieldLabels = {
   date: 'Date?',
@@ -23,11 +25,83 @@ function emptyTicket() {
 }
 
 function cleanMessage(error) {
-  if (error?.message?.includes('Failed to fetch')) {
-    return 'Network connection failed. Check that the backend is running and try again.';
+  if (error?.message?.includes('Failed to fetch') || error?.message?.includes('Load failed')) {
+    return `Network request failed: ${error.message}. Check that the backend URL and CORS settings are correct.`;
   }
 
   return error.message || 'Something went wrong. Please try again.';
+}
+
+function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not read this photo. Please retake it or choose a different image.'));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToJpegBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Could not prepare this photo for upload.'));
+        }
+      },
+      'image/jpeg',
+      JPEG_QUALITY
+    );
+  });
+}
+
+async function convertImageToJpeg(file) {
+  const image = await loadImageFromFile(file);
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error('Could not prepare this photo for upload.');
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  context.drawImage(image, 0, 0, width, height);
+
+  const blob = await canvasToJpegBlob(canvas);
+
+  return new File([blob], 'grain-ticket.jpg', {
+    type: 'image/jpeg',
+    lastModified: Date.now()
+  });
+}
+
+async function readErrorResponse(response) {
+  const text = await response.text();
+
+  if (!text) {
+    return response.statusText || `Request failed with status ${response.status}`;
+  }
+
+  try {
+    const data = JSON.parse(text);
+    return data.detail ? `${data.error} ${data.detail}` : data.error || text;
+  } catch {
+    return text;
+  }
 }
 
 function uniqueOptions(values = []) {
@@ -100,11 +174,12 @@ function App() {
 
     try {
       const response = await fetch(`${API_BASE}/api/dropdowns`);
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail ? `${data.error} ${data.detail}` : data.error || 'Could not load dropdowns.');
+        throw new Error(await readErrorResponse(response));
       }
+
+      const data = await response.json();
 
       setDropdowns({
         bins: uniqueOptions(data.bins),
@@ -235,21 +310,25 @@ function App() {
 
     setIsExtracting(true);
     setIsSuccess(false);
-    setStatus('Reading ticket image...');
+    setStatus('Preparing photo for upload...');
 
     const formData = new FormData();
-    formData.append('ticketImage', selectedFile);
 
     try {
+      const uploadFile = await convertImageToJpeg(selectedFile);
+      formData.append('ticketImage', uploadFile);
+      setStatus('Reading ticket image...');
+
       const response = await fetch(`${API_BASE}/api/extract-ticket`, {
         method: 'POST',
         body: formData
       });
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail ? `${data.error} ${data.detail}` : data.error || 'OCR failed.');
+        throw new Error(await readErrorResponse(response));
       }
+
+      const data = await response.json();
 
       setTicket((current) => ({
         ...emptyTicket(),
@@ -285,11 +364,12 @@ function App() {
         },
         body: JSON.stringify({ ticket })
       });
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail ? `${data.error} ${data.detail}` : data.error || 'Submit failed.');
+        throw new Error(await readErrorResponse(response));
       }
+
+      const data = await response.json();
 
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);

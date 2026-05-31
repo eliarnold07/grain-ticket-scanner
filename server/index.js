@@ -4,12 +4,13 @@ import cors from 'cors';
 import multer from 'multer';
 import OpenAI from 'openai';
 import { google } from 'googleapis';
+import { randomUUID } from 'node:crypto';
 
 const app = express();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 12 * 1024 * 1024
+    fileSize: 25 * 1024 * 1024
   }
 });
 
@@ -70,7 +71,7 @@ let dropdownCache = {
 };
 
 app.use(cors({ origin: allowedOrigin }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '2mb' }));
 
 function blankTicket() {
   return Object.fromEntries(ticketFields.map((field) => [field, '']));
@@ -161,6 +162,23 @@ function logError(label, error) {
     message: error.message,
     status: error.status,
     code: error.code
+  });
+}
+
+function scanUpload(req, res, next) {
+  upload.single('ticketImage')(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    logError('Ticket image upload failed', error);
+    res.status(400).json({
+      error: 'Could not upload ticket image.',
+      detail: error.code === 'LIMIT_FILE_SIZE'
+        ? 'The photo is too large. Please retake it or choose a smaller image.'
+        : error.message
+    });
   });
 }
 
@@ -322,7 +340,19 @@ app.get('/api/dropdowns', async (_req, res) => {
   }
 });
 
-app.post('/api/extract-ticket', upload.single('ticketImage'), async (req, res) => {
+app.post('/api/extract-ticket', scanUpload, async (req, res) => {
+  const scanId = randomUUID();
+  const startedAt = Date.now();
+
+  console.log('Ticket scan request received', {
+    scanId,
+    hasFile: Boolean(req.file),
+    fileName: req.file?.originalname,
+    mimeType: req.file?.mimetype,
+    fileSizeBytes: req.file?.size,
+    userAgent: req.get('user-agent')
+  });
+
   if (!req.file) {
     return res.status(400).json({ error: 'Please upload a ticket image.' });
   }
@@ -341,6 +371,13 @@ app.post('/api/extract-ticket', upload.single('ticketImage'), async (req, res) =
       : 'For delivered_to, use the delivery destination visible on the ticket. Otherwise return an empty string.';
     const imageBase64 = req.file.buffer.toString('base64');
     const imageUrl = `data:${req.file.mimetype};base64,${imageBase64}`;
+
+    console.log('Ticket image prepared for OpenAI', {
+      scanId,
+      mimeType: req.file.mimetype,
+      fileSizeBytes: req.file.size,
+      base64Bytes: imageBase64.length
+    });
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4.1-mini',
@@ -394,6 +431,14 @@ app.post('/api/extract-ticket', upload.single('ticketImage'), async (req, res) =
     const ticketKey = duplicateKey(ticket.ticket_number);
     const isDuplicate = Boolean(ticketKey && duplicateTicketNumbers.has(ticketKey));
 
+    console.log('Ticket scan completed', {
+      scanId,
+      durationMs: Date.now() - startedAt,
+      ticketNumber: ticket.ticket_number,
+      crop: ticket.crop,
+      bushels: ticket.bushels
+    });
+
     res.json({
       ticket,
       duplicate: {
@@ -406,7 +451,7 @@ app.post('/api/extract-ticket', upload.single('ticketImage'), async (req, res) =
       }
     });
   } catch (error) {
-    logError('Ticket extraction failed', error);
+    logError(`Ticket extraction failed scanId=${scanId}`, error);
     res.status(500).json({
       error: 'Could not extract ticket data from this image.',
       detail: error.message

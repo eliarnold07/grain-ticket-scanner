@@ -106,13 +106,13 @@ DROPDOWN_CACHE_MS=60000
 Required frontend variable on Netlify:
 
 ```text
-VITE_API_BASE=https://your-render-api-url.onrender.com
+VITE_API_URL=https://your-render-api-url.onrender.com
 ```
 
 For local frontend development:
 
 ```text
-VITE_API_BASE=http://localhost:3001
+VITE_API_URL=http://localhost:3001
 ```
 
 ## Local Setup
@@ -197,7 +197,7 @@ VITE_API_BASE=http://localhost:3001
 3. Add this Netlify environment variable:
 
    ```text
-   VITE_API_BASE=https://your-render-api-url.onrender.com
+   VITE_API_URL=https://your-render-api-url.onrender.com
    ```
 
 4. Deploy the site.
