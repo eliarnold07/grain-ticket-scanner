@@ -63,15 +63,13 @@ Destinations!A3 = Gavilon
 
 The app loads these values from Google Sheets on page load, refreshes them about once per minute, and refreshes when the browser regains focus. Missing tabs are handled gracefully; users can still choose `Other` and type a value.
 
-The backend also includes starter dropdown values so the app is usable even before the tabs are filled out:
+The backend includes starter destination values so the app is usable even before the destination tab is filled out:
 
 ```text
 Destinations: Rock Port, Purdue, GPC, Newburgh, CO-OP, Bunge
-Haulers: Todd, Denie, Jeremy, Jared, Zac, Eli
-Bins: Joe Gray 30 ft, House 42 ft, House Front 24ft, House Back 24ft, 30ft ft By Jared's, 18ft By Jared's, 42 ft By Jared's, Shivers Bin by Jared's, 27 ft On Hill By Jared's, Buchta Front 24 ft, Buchta Back 24 ft, Field, Fall out of Bin, House 48 ft
 ```
 
-Values added to the sheet tabs are merged into those starter lists.
+In local development mode, `Hauled From` comes from bins created in the Grain Bins page, plus a built-in `Field` option for grain sold straight out of the field. `Hauled By` comes from drivers created on the scanner page. `Delivered To` is read from the scanned ticket or typed manually by the user. Values added to the Google Sheet tabs are only used in sheets/production mode.
 
 ## Environment Variables
 
@@ -79,11 +77,19 @@ Required backend variables:
 
 ```text
 OPENAI_API_KEY=your_openai_api_key_here
+TICKET_STORAGE_MODE=sheets
 GOOGLE_SHEET_ID=1yujW3z162d55zZou-cLZLkp8_ve1-gbqI2MjVRP_fWE
 GOOGLE_SHEET_TAB=Form Responses 1
 GOOGLE_CLIENT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 CORS_ORIGIN=http://localhost:5173
+```
+
+`TICKET_STORAGE_MODE` controls whether submitted tickets write to Google Sheets or only to the local development log:
+
+```text
+TICKET_STORAGE_MODE=sheets  # production behavior: Google Sheets + local log
+TICKET_STORAGE_MODE=local   # development behavior: local ticket log only
 ```
 
 Use this locally:
@@ -223,14 +229,142 @@ Google Sheets credentials source: environment variables
 
 ## Daily Use
 
-1. Hauler opens the Netlify link.
-2. Hauler takes or uploads a ticket photo.
-3. App extracts Date, Crop, Ticket number, Bushels, Delivered To, and Moisture.
-4. Hauler reviews and edits fields.
-5. Hauler chooses or types Hauled By and Hauled From.
-6. Hauler submits.
-7. App shows `Ticket submitted successfully`.
-8. Row appears in Google Sheets.
+1. User lands on the BinFlow dashboard.
+2. User can review inventory KPIs, recent activity, and bin overview.
+3. Hauler opens the Scanner tab.
+4. Hauler takes or uploads a ticket photo.
+5. App extracts Date, Crop, Ticket number, Bushels, Delivered To, and Moisture.
+6. Hauler reviews and edits fields.
+7. Hauler chooses or types Hauled By and Hauled From.
+8. Hauler submits.
+9. App shows `Ticket submitted successfully` or `Ticket saved locally`, depending on storage mode.
+
+## Dashboard
+
+The development branch includes a professional `Dashboard` tab as the default landing page. The dashboard reads from local ticket logs and inventory transactions.
+
+Dashboard metrics:
+
+```text
+Total Corn Inventory = sum of current bushels for bins with crop type Corn
+Total Bean Inventory = sum of current bushels for bins with crop type Beans
+Total Bushels Stored = sum of current bushels across all bins
+Total Tickets Scanned = count of local ticket logs
+Total Bushels Sold = sum of TICKET_SALE transaction bushels
+Number of Active Bins = count of local bin records
+```
+
+The dashboard endpoint is:
+
+```text
+GET /api/dashboard
+```
+
+It returns KPI cards, recent activity, bin overview, and simple chart data for inventory by crop and storage utilization.
+
+## Ticket History Development Feature
+
+The development branch includes an in-app `Ticket History` view. In local mode, tickets are saved only to a local development log and do not touch the production Google Sheet:
+
+```text
+data/ticket-logs.json
+```
+
+This file is ignored by git so local test logs do not get committed. The store is intentionally simple for this first step and is isolated in:
+
+```text
+server/ticketLogStore.js
+```
+
+The API endpoint is:
+
+```text
+GET /api/ticket-logs
+```
+
+Supported filters:
+
+```text
+search
+date
+crop
+ticket_number
+elevator
+```
+
+This keeps the scanner and Google Sheets workflow working while giving us a modular place to later connect ticket logs to bin inventory transactions.
+
+For local feature work, set this in `.env`:
+
+```text
+TICKET_STORAGE_MODE=local
+```
+
+For the deployed production backend on Render, keep this set to `sheets` or leave it unset:
+
+```text
+TICKET_STORAGE_MODE=sheets
+```
+
+## Inventory Foundation Development Feature
+
+The development branch includes a local Grain Bins inventory foundation. It does not connect scanned tickets to inventory yet.
+
+Inventory data is stored locally:
+
+```text
+data/inventory.json
+data/drivers.json
+```
+
+The inventory store is isolated in:
+
+```text
+server/inventoryStore.js
+```
+
+Bin records include:
+
+```text
+bin name
+crop type
+estimated capacity in bushels
+current bushels
+notes / description
+created timestamp
+updated timestamp
+```
+
+Every inventory balance change creates a transaction record. Transaction types:
+
+```text
+ADD_GRAIN
+REMOVE_GRAIN
+MANUAL_ADJUSTMENT
+TICKET_SALE
+```
+
+Current API endpoints:
+
+```text
+GET    /api/bins
+POST   /api/bins
+PUT    /api/bins/:id
+DELETE /api/bins/:id
+GET    /api/inventory-transactions
+POST   /api/inventory-transactions
+```
+
+Step 3 can later connect submitted ticket logs to `TICKET_SALE` transactions that subtract from selected bins.
+
+Current development behavior:
+
+```text
+Submitting a ticket with Hauled From = Field does not change bin inventory.
+Submitting a ticket with Hauled From = an existing bin creates a TICKET_SALE transaction and subtracts bushels from that bin.
+Deleting a ticket log removes the log and deletes the linked TICKET_SALE transaction when one exists.
+Deleting a recent transaction from a bin removes that transaction and also deletes the linked ticket log when the transaction came from a scanned ticket.
+```
 
 ## Updating Dropdown Values
 
