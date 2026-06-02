@@ -120,6 +120,16 @@ function normalizeDecimal(value) {
   return Number.isFinite(numeric) ? String(numeric) : text;
 }
 
+function normalizeKnownOption(value, options) {
+  const text = cleanSpaces(value);
+
+  if (!text) {
+    return '';
+  }
+
+  return options.find((option) => option.toLowerCase() === text.toLowerCase()) || text;
+}
+
 function normalizeTicketData(data) {
   const clean = blankTicket();
 
@@ -130,9 +140,9 @@ function normalizeTicketData(data) {
   clean.crop = normalizeCrop(clean.crop);
   clean.bushels = normalizeDecimal(clean.bushels);
   clean.moisture = normalizeDecimal(clean.moisture);
-  clean.delivered_to = titleCase(clean.delivered_to);
-  clean.hauled_by = titleCase(clean.hauled_by);
-  clean.hauled_from = titleCase(clean.hauled_from);
+  clean.delivered_to = normalizeKnownOption(clean.delivered_to, defaultDropdownValues.destinations);
+  clean.hauled_by = normalizeKnownOption(clean.hauled_by, defaultDropdownValues.haulers);
+  clean.hauled_from = normalizeKnownOption(clean.hauled_from, defaultDropdownValues.bins);
 
   return clean;
 }
