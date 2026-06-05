@@ -35,7 +35,7 @@ input:disabled {
 }
 
 .app-shell {
-  width: min(100%, 980px);
+  width: min(100%, 1280px);
   margin: 0 auto;
   padding: 14px;
 }
@@ -90,6 +90,7 @@ h2 {
 .review-form,
 .history-panel,
 .inventory-panel,
+.contracts-panel,
 .success-panel {
   background: #ffffff;
   border: 1px solid #ded8c9;
@@ -183,6 +184,10 @@ h2 {
 
 .quick-actions button:nth-child(3) {
   background: #39493d;
+}
+
+.quick-actions button:nth-child(4) {
+  background: #4b624f;
 }
 
 .kpi-grid {
@@ -496,6 +501,10 @@ h2 {
   margin-top: 16px;
 }
 
+.contracts-panel {
+  margin-top: 16px;
+}
+
 .form-heading p {
   margin-bottom: 14px;
   color: #5d665d;
@@ -613,7 +622,7 @@ h2 {
 
 .history-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
   margin-top: 12px;
 }
@@ -628,6 +637,10 @@ h2 {
 
 .history-actions button + button {
   background: #6d3520;
+}
+
+.history-actions button:nth-child(3) {
+  background: #39493d;
 }
 
 .history-count {
@@ -655,6 +668,287 @@ h2 {
   border-radius: 8px;
   padding: 10px;
   background: #fffdf8;
+}
+
+.ticket-table-wrap {
+  width: 100%;
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid #d5d0c2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.ticket-table {
+  width: 100%;
+  min-width: 1760px;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.ticket-table th,
+.ticket-table td {
+  border-bottom: 1px solid #e7e0d0;
+  padding: 9px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.ticket-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eef3ed;
+}
+
+.ticket-table th button {
+  padding: 0;
+  background: transparent;
+  color: #314136;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticket-table tbody tr:hover {
+  background: #f8faf7;
+}
+
+.ticket-table .primary-cell {
+  color: #1f5837;
+  font-weight: 900;
+}
+
+.ticket-table .notes-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.table-actions button,
+.secondary-button {
+  min-height: 34px;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #265d3a;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.table-actions .danger-button {
+  background: #7a3524;
+}
+
+.status-tag {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: #edf1ec;
+  color: #39493d;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.status-tag.contract,
+.status-tag.paid {
+  background: #e4f2e6;
+  color: #1f6336;
+}
+
+.status-tag.spot,
+.status-tag.partially-paid {
+  background: #fff0d6;
+  color: #815115;
+}
+
+.status-tag.split {
+  background: #e8eef6;
+  color: #345475;
+}
+
+.status-tag.not-paid,
+.status-tag.unassigned {
+  background: #f5e7e3;
+  color: #7a3524;
+}
+
+.ticket-editor {
+  margin-top: 16px;
+  border: 1px solid #bfcbbd;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8faf7;
+}
+
+.editor-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.editor-section {
+  margin-top: 16px;
+  border-top: 1px solid #d8ded5;
+  padding-top: 14px;
+}
+
+.editor-section h3 {
+  margin: 0 0 12px;
+}
+
+.assignment-row {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assignment-row select,
+.assignment-row input,
+.assignment-row .spot-label {
+  min-height: 44px;
+  border: 1px solid #cbc5b7;
+  border-radius: 7px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.assignment-row .spot-label {
+  display: flex;
+  align-items: center;
+  color: #526255;
+}
+
+.assignment-row button {
+  min-height: 44px;
+  border-radius: 7px;
+  background: #7a3524;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.finance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.finance-grid article {
+  border-left: 4px solid #52745a;
+  padding: 10px 12px;
+  background: #f6f8f5;
+}
+
+.finance-grid span,
+.contract-metrics span {
+  display: block;
+  color: #647065;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.finance-grid strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 1.15rem;
+}
+
+.brief-grid,
+.contract-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.brief-grid article {
+  border-left: 4px solid #b08a3c;
+  padding: 10px 12px;
+  background: #faf8f1;
+}
+
+.brief-grid span {
+  color: #765f2f;
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.brief-grid h3 {
+  margin: 5px 0;
+  font-size: 1rem;
+}
+
+.brief-grid p,
+.brief-grid time {
+  margin: 0;
+  color: #647065;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.brief-grid time {
+  display: block;
+  margin-top: 8px;
+}
+
+.contract-form,
+.contract-card {
+  border: 1px solid #d5d0c2;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffdf8;
+}
+
+.contract-grid {
+  margin-top: 14px;
+}
+
+.contract-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.contract-head span,
+.contract-head p,
+.contract-window {
+  color: #647065;
+}
+
+.contract-head h3 {
+  margin: 4px 0;
+}
+
+.contract-head p,
+.contract-window {
+  margin: 0;
+}
+
+.contract-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.contract-metrics div {
+  padding: 9px;
+  background: #f3f6f2;
+}
+
+.contract-metrics strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.92rem;
+}
+
+.contract-window {
+  margin-top: 10px;
+  line-height: 1.4;
 }
 
 .ticket-log-head {
@@ -861,7 +1155,7 @@ h2 {
   }
 
   .view-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .dashboard-hero {
@@ -890,16 +1184,36 @@ h2 {
   .capture-panel,
   .driver-panel,
   .review-form,
-  .history-panel,
-  .inventory-panel,
-  .success-panel {
+    .history-panel,
+    .inventory-panel,
+    .contracts-panel,
+    .success-panel {
     padding: 20px;
   }
 
   .field-grid,
   .history-filters,
   .ticket-log-details,
-  .transaction-form {
+  .transaction-form,
+  .editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .history-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .assignment-row {
+    grid-template-columns: 150px minmax(220px, 1fr) 140px auto;
+    align-items: center;
+  }
+
+  .finance-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .brief-grid,
+  .contract-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

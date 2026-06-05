@@ -8,17 +8,34 @@ const MAX_IMAGE_DIMENSION = 1800;
 const JPEG_QUALITY = 0.82;
 
 const fieldLabels = {
-  date: 'Date?',
-  crop: 'Crop?',
+  date: 'Date',
+  crop: 'Commodity',
   ticket_number: 'Ticket number',
   bushels: 'Bushels',
+  gross_weight: 'Gross Weight',
+  tare_weight: 'Tare Weight',
+  net_weight: 'Net Weight',
   delivered_to: 'Delivered To',
   hauled_by: 'Hauled By',
   moisture: 'Moisture',
-  hauled_from: 'Hauled From'
+  hauled_from: 'Hauled From',
+  price: 'Price per Bushel',
+  notes: 'Notes'
 };
 
 const fields = Object.keys(fieldLabels);
+const scannerFields = [
+  'ticket_number',
+  'date',
+  'crop',
+  'hauled_from',
+  'delivered_to',
+  'bushels',
+  'price',
+  'hauled_by',
+  'notes',
+  'moisture'
+];
 const blankBinForm = {
   bin_name: '',
   crop_type: '',
@@ -31,6 +48,29 @@ const blankTransactionForm = {
   bushel_amount: '',
   notes: ''
 };
+const blankContractForm = {
+  contract_id: '',
+  buyer: '',
+  commodity: '',
+  contracted_bushels: '',
+  contract_price: '',
+  delivery_window: '',
+  status: 'Open',
+  notes: ''
+};
+
+function ticketEditForm(log = {}) {
+  return {
+    ...log,
+    assignment_status: log.assignment_status || 'Unassigned',
+    assignments: Array.isArray(log.assignments) ? log.assignments : [],
+    payment_status: log.payment_status || 'Not paid',
+    payment_date: log.payment_date || '',
+    amount_received: log.amount_received || '',
+    payment_reference: log.payment_reference || '',
+    payment_notes: log.payment_notes || ''
+  };
+}
 
 function emptyTicket() {
   return Object.fromEntries(fields.map((field) => [field, '']));
@@ -143,6 +183,13 @@ function formatNumber(value) {
   return Number.isFinite(number) ? number.toLocaleString(undefined, { maximumFractionDigits: 2 }) : displayValue(value);
 }
 
+function formatCurrency(value) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+    : '$0.00';
+}
+
 function percentLabel(value) {
   return value === null || value === undefined ? '-' : `${Math.round(value)}%`;
 }
@@ -177,6 +224,11 @@ function App() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [ticketLogs, setTicketLogs] = useState([]);
+  const [contracts, setContracts] = useState([]);
+  const [contractForm, setContractForm] = useState(blankContractForm);
+  const [editingContractId, setEditingContractId] = useState('');
+  const [editingTicket, setEditingTicket] = useState(null);
+  const [historySort, setHistorySort] = useState({ field: 'created_at', direction: 'desc' });
   const [bins, setBins] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [isLoadingBins, setIsLoadingBins] = useState(false);
@@ -190,8 +242,25 @@ function App() {
     date: '',
     crop: '',
     ticket_number: '',
-    elevator: ''
+    elevator: '',
+    assignment_status: '',
+    payment_status: ''
   });
+  const sortedTicketLogs = useMemo(() => {
+    const direction = historySort.direction === 'asc' ? 1 : -1;
+
+    return [...ticketLogs].sort((a, b) => {
+      const left = historySort.field === 'created_at'
+        ? new Date(a.created_at).getTime()
+        : String(a[historySort.field] ?? '').toLowerCase();
+      const right = historySort.field === 'created_at'
+        ? new Date(b.created_at).getTime()
+        : String(b[historySort.field] ?? '').toLowerCase();
+
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction;
+      return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
+    });
+  }, [ticketLogs, historySort]);
   const [dashboard, setDashboard] = useState({
     kpis: {
       total_corn_inventory: 0,
@@ -200,6 +269,13 @@ function App() {
       total_tickets_scanned: 0,
       total_bushels_sold: 0,
       active_bins: 0
+    },
+    finance: {
+      unpaid_delivered_bushels: 0,
+      unpaid_estimated_dollars: 0,
+      payments_received_this_month: 0,
+      contracts_with_remaining_bushels: 0,
+      unassigned_tickets: 0
     },
     charts: {
       inventory_by_crop: [
@@ -218,7 +294,7 @@ function App() {
   });
 
   const filledCount = useMemo(
-    () => fields.filter((field) => ticket[field]?.trim()).length,
+    () => scannerFields.filter((field) => ticket[field]?.trim()).length,
     [ticket]
   );
 
@@ -228,6 +304,7 @@ function App() {
     loadTicketHistory({ silent: true });
     loadBins({ silent: true });
     loadDrivers({ silent: true });
+    loadContracts({ silent: true });
     const intervalId = window.setInterval(() => loadDropdowns({ silent: true }), 60000);
     const handleFocus = () => loadDropdowns({ silent: true });
 
@@ -352,6 +429,180 @@ function App() {
     }
   }
 
+  async function loadContracts(options = {}) {
+    try {
+      const response = await fetch(`${API_BASE}/api/contracts`);
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await response.json();
+      setContracts(data.contracts || []);
+    } catch (error) {
+      if (!options.silent) setStatus(cleanMessage(error));
+    }
+  }
+
+  function startEditingTicket(log) {
+    setEditingTicket(ticketEditForm(log));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function updateEditingTicket(field, value) {
+    setEditingTicket((current) => ({ ...current, [field]: value }));
+  }
+
+  function setAssignmentStatus(value) {
+    setEditingTicket((current) => {
+      const bushels = Number(current.bushels) || 0;
+      let assignments = [];
+
+      if (value === 'Spot') assignments = [{ type: 'SPOT', contract_id: '', bushels }];
+      if (value === 'Contract') assignments = [{ type: 'CONTRACT', contract_id: '', bushels }];
+      if (value === 'Split') assignments = [
+        { type: 'CONTRACT', contract_id: '', bushels: '' },
+        { type: 'SPOT', contract_id: '', bushels: '' }
+      ];
+
+      return { ...current, assignment_status: value, assignments };
+    });
+  }
+
+  function updateAssignment(index, field, value) {
+    setEditingTicket((current) => ({
+      ...current,
+      assignments: current.assignments.map((assignment, assignmentIndex) => (
+        assignmentIndex === index
+          ? {
+              ...assignment,
+              [field]: value,
+              ...(field === 'type' && value === 'SPOT' ? { contract_id: '' } : {})
+            }
+          : assignment
+      ))
+    }));
+  }
+
+  function addAssignmentRow() {
+    setEditingTicket((current) => ({
+      ...current,
+      assignments: [...current.assignments, { type: 'CONTRACT', contract_id: '', bushels: '' }]
+    }));
+  }
+
+  function removeAssignmentRow(index) {
+    setEditingTicket((current) => ({
+      ...current,
+      assignments: current.assignments.filter((_, assignmentIndex) => assignmentIndex !== index)
+    }));
+  }
+
+  async function saveTicketChanges(event) {
+    event.preventDefault();
+
+    const assignedBushels = editingTicket.assignments.reduce((sum, assignment) => sum + (Number(assignment.bushels) || 0), 0);
+    if (['Contract', 'Split'].includes(editingTicket.assignment_status) && Math.abs(assignedBushels - Number(editingTicket.bushels || 0)) > 0.01) {
+      setStatus(`Assignments must total ${editingTicket.bushels || 0} bushels.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/ticket-logs/${editingTicket.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingTicket)
+      });
+
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      setEditingTicket(null);
+      await Promise.all([loadTicketHistory(), loadContracts({ silent: true }), loadDashboard({ silent: true })]);
+      setStatus('Ticket assignment and payment details updated.');
+    } catch (error) {
+      setStatus(cleanMessage(error));
+    }
+  }
+
+  function updateContractForm(field, value) {
+    setContractForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function resetContractForm() {
+    setContractForm(blankContractForm);
+    setEditingContractId('');
+  }
+
+  function startEditingContract(contract) {
+    setEditingContractId(contract.id);
+    setContractForm({
+      contract_id: contract.contract_id,
+      buyer: contract.buyer,
+      commodity: contract.commodity,
+      contracted_bushels: contract.contracted_bushels,
+      contract_price: contract.contract_price,
+      delivery_window: contract.delivery_window,
+      status: contract.status,
+      notes: contract.notes
+    });
+  }
+
+  async function saveContract(event) {
+    event.preventDefault();
+    const editing = Boolean(editingContractId);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/contracts${editing ? `/${editingContractId}` : ''}`, {
+        method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(contractForm)
+      });
+
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      resetContractForm();
+      await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
+      setStatus(editing ? 'Contract updated.' : 'Contract created.');
+    } catch (error) {
+      setStatus(cleanMessage(error));
+    }
+  }
+
+  async function removeContract(id) {
+    if (!window.confirm('Delete this contract?')) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/api/contracts/${id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
+      setStatus('Contract deleted.');
+    } catch (error) {
+      setStatus(cleanMessage(error));
+    }
+  }
+
+  function toggleHistorySort(field) {
+    setHistorySort((current) => ({
+      field,
+      direction: current.field === field && current.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  }
+
+  function exportTicketCsv() {
+    const columns = [
+      ['Ticket Number', 'ticket_number'], ['Date', 'date'], ['Crop', 'crop'], ['Hauled From', 'hauled_from'],
+      ['Delivered To', 'delivered_to'], ['Gross Weight', 'gross_weight'], ['Tare Weight', 'tare_weight'],
+      ['Net Weight', 'net_weight'], ['Bushels', 'bushels'], ['Moisture', 'moisture'], ['Price', 'price'],
+      ['Revenue', 'revenue'], ['Hauled By', 'hauled_by'], ['Notes', 'notes'], ['Assignment Status', 'assignment_status'],
+      ['Payment Status', 'payment_status'], ['Payment Date', 'payment_date'], ['Amount Received', 'amount_received'],
+      ['Payment Reference', 'payment_reference'], ['Payment Notes', 'payment_notes']
+    ];
+    const escape = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const csv = [
+      columns.map(([label]) => escape(label)).join(','),
+      ...sortedTicketLogs.map((log) => columns.map(([, key]) => escape(log[key])).join(','))
+    ].join('\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    link.download = `binflow-tickets-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
   async function removeTicketLog(logId) {
     const confirmed = window.confirm('Delete this ticket log? If it changed bin inventory, that linked transaction will be removed too.');
 
@@ -368,7 +619,7 @@ function App() {
         throw new Error(await readErrorResponse(response));
       }
 
-      await Promise.all([loadTicketHistory(), loadBins({ silent: true }), loadDashboard({ silent: true })]);
+      await Promise.all([loadTicketHistory(), loadBins({ silent: true }), loadContracts({ silent: true }), loadDashboard({ silent: true })]);
       setStatus('Ticket log deleted.');
     } catch (error) {
       setStatus(cleanMessage(error));
@@ -619,7 +870,9 @@ function App() {
       date: '',
       crop: '',
       ticket_number: '',
-      elevator: ''
+      elevator: '',
+      assignment_status: '',
+      payment_status: ''
     });
   }
 
@@ -773,18 +1026,48 @@ function App() {
       return;
     }
 
+    const selectedBin = bins.find((bin) => bin.bin_name.toLowerCase() === ticket.hauled_from.trim().toLowerCase());
+    const exceedsEstimate = selectedBin && Number(ticket.bushels) > Number(selectedBin.current_bushels);
+    let allowBinOverdraw = false;
+
+    if (exceedsEstimate) {
+      allowBinOverdraw = window.confirm('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
+
+      if (!allowBinOverdraw) {
+        setStatus('Ticket was not submitted. Review the selected bin or bushel amount.');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setIsSuccess(false);
     setStatus('Submitting reviewed data...');
 
     try {
-      const response = await fetch(`${API_BASE}/api/submit-ticket`, {
+      const sendTicket = (confirmedOverdraw) => fetch(`${API_BASE}/api/submit-ticket`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ticket })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticket,
+          allow_bin_overdraw: confirmedOverdraw
+        })
       });
+      let response = await sendTicket(allowBinOverdraw);
+
+      if (response.status === 409 && !allowBinOverdraw) {
+        const errorData = await response.json();
+
+        if (errorData.code === 'BIN_INVENTORY_OVERDRAW') {
+          allowBinOverdraw = window.confirm('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
+
+          if (!allowBinOverdraw) {
+            setStatus('Ticket was not submitted. Review the selected bin or bushel amount.');
+            return;
+          }
+
+          response = await sendTicket(true);
+        }
+      }
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
@@ -813,6 +1096,9 @@ function App() {
       setIsSuccess(true);
       setStatus(data.message || 'Ticket submitted successfully');
       loadTicketHistory({ silent: true });
+      loadContracts({ silent: true });
+      loadBins({ silent: true });
+      loadDropdowns({ silent: true });
       loadDashboard({ silent: true });
     } catch (error) {
       setStatus(cleanMessage(error));
@@ -863,7 +1149,7 @@ function App() {
           <p className="eyebrow">Grain operations platform</p>
           <h1>BinFlow</h1>
         </div>
-        <div className="status-pill">{filledCount}/{fields.length} fields</div>
+        <div className="status-pill">{filledCount}/{scannerFields.length} fields</div>
       </section>
 
       <nav className="view-tabs" aria-label="App views">
@@ -904,6 +1190,16 @@ function App() {
         >
           Grain Bins
         </button>
+        <button
+          className={activeView === 'contracts' ? 'active' : ''}
+          type="button"
+          onClick={() => {
+            setActiveView('contracts');
+            loadContracts();
+          }}
+        >
+          Contracts
+        </button>
       </nav>
 
       {activeView === 'dashboard' && (
@@ -918,6 +1214,7 @@ function App() {
               <button type="button" onClick={() => setActiveView('scanner')}>Scan Ticket</button>
               <button type="button" onClick={() => setActiveView('inventory')}>Manage Bins</button>
               <button type="button" onClick={() => setActiveView('history')}>View Logs</button>
+              <button type="button" onClick={() => setActiveView('contracts')}>Manage Contracts</button>
             </div>
           </div>
 
@@ -953,6 +1250,23 @@ function App() {
               <small>managed storage</small>
             </article>
           </div>
+
+          <section className="dashboard-card">
+            <div className="section-title-row">
+              <div>
+                <h2>Sales and Payments</h2>
+                <p>Delivered grain that still needs assignment or reconciliation.</p>
+              </div>
+              <button type="button" onClick={() => setActiveView('history')}>Review Tickets</button>
+            </div>
+            <div className="finance-grid">
+              <article><span>Unpaid Delivered</span><strong>{formatNumber(dashboard.finance?.unpaid_delivered_bushels)} bu</strong></article>
+              <article><span>Unpaid Estimated</span><strong>{formatCurrency(dashboard.finance?.unpaid_estimated_dollars)}</strong></article>
+              <article><span>Received This Month</span><strong>{formatCurrency(dashboard.finance?.payments_received_this_month)}</strong></article>
+              <article><span>Open Contract Balances</span><strong>{formatNumber(dashboard.finance?.contracts_with_remaining_bushels)}</strong></article>
+              <article><span>Unassigned Tickets</span><strong>{formatNumber(dashboard.finance?.unassigned_tickets)}</strong></article>
+            </div>
+          </section>
 
           <div className="dashboard-grid">
             <section className="dashboard-card">
@@ -1050,6 +1364,35 @@ function App() {
               ))}
             </div>
           </section>
+
+          <section className="dashboard-card farm-brief">
+            <div className="section-title-row">
+              <div>
+                <h2>Farm Brief</h2>
+                <p>Small seasonal reminders for the operation.</p>
+              </div>
+            </div>
+            <div className="brief-grid">
+              <article>
+                <span>Harvest Prep</span>
+                <h3>Confirm storage headroom</h3>
+                <p>Review current bin balances and leave room for wet grain before the next field starts.</p>
+                <time>Updated June 5, 2026</time>
+              </article>
+              <article>
+                <span>Grain Quality</span>
+                <h3>Watch moisture trends</h3>
+                <p>Compare recent ticket moisture readings before changing dryer or harvest settings.</p>
+                <time>Updated June 5, 2026</time>
+              </article>
+              <article>
+                <span>Reconciliation</span>
+                <h3>Match payments weekly</h3>
+                <p>Assign delivered tickets and record checks or ACH payments before statements pile up.</p>
+                <time>Updated June 5, 2026</time>
+              </article>
+            </div>
+          </section>
         </section>
       )}
 
@@ -1105,6 +1448,25 @@ function App() {
                 placeholder="Rock Port"
               />
             </label>
+            <label className="field">
+              <span>Assignment</span>
+              <select value={historyFilters.assignment_status} onChange={(event) => updateHistoryFilter('assignment_status', event.target.value)}>
+                <option value="">All assignments</option>
+                <option>Unassigned</option>
+                <option>Spot</option>
+                <option>Contract</option>
+                <option>Split</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Payment</span>
+              <select value={historyFilters.payment_status} onChange={(event) => updateHistoryFilter('payment_status', event.target.value)}>
+                <option value="">All payments</option>
+                <option>Not paid</option>
+                <option>Partially paid</option>
+                <option>Paid</option>
+              </select>
+            </label>
           </div>
 
           <div className="history-actions">
@@ -1114,65 +1476,259 @@ function App() {
             <button type="button" onClick={clearHistoryFilters}>
               Clear Filters
             </button>
+            <button type="button" onClick={exportTicketCsv}>
+              Export CSV
+            </button>
           </div>
 
           <div className="history-count">{ticketLogs.length} ticket logs</div>
 
-          <div className="ticket-log-list">
+          {editingTicket && (
+            <form className="ticket-editor" onSubmit={saveTicketChanges}>
+              <div className="section-title-row">
+                <div>
+                  <h2>Edit Ticket {editingTicket.ticket_number}</h2>
+                  <p>Correct ticket details, assignment, and payment reconciliation.</p>
+                </div>
+                <button type="button" onClick={() => setEditingTicket(null)}>Close</button>
+              </div>
+
+              <div className="editor-grid">
+                {[
+                  ['ticket_number', 'Ticket Number'], ['date', 'Date'], ['crop', 'Crop'], ['hauled_from', 'Hauled From'],
+                  ['delivered_to', 'Delivered To'], ['gross_weight', 'Gross Weight'], ['tare_weight', 'Tare Weight'],
+                  ['net_weight', 'Net Weight'], ['bushels', 'Bushels'], ['moisture', 'Moisture'], ['price', 'Price per Bushel'],
+                  ['hauled_by', 'Hauled By']
+                ].map(([key, label]) => (
+                  <label className="field" key={key}>
+                    <span>{label}</span>
+                    <input value={editingTicket[key] ?? ''} onChange={(event) => updateEditingTicket(key, event.target.value)} />
+                  </label>
+                ))}
+                <label className="field wide-field">
+                  <span>Notes</span>
+                  <textarea rows={2} value={editingTicket.notes || ''} onChange={(event) => updateEditingTicket('notes', event.target.value)} />
+                </label>
+              </div>
+
+              <div className="editor-section">
+                <h3>Grain Assignment</h3>
+                <label className="field">
+                  <span>Assignment Status</span>
+                  <select value={editingTicket.assignment_status} onChange={(event) => setAssignmentStatus(event.target.value)}>
+                    <option>Unassigned</option>
+                    <option>Spot</option>
+                    <option>Contract</option>
+                    <option>Split</option>
+                  </select>
+                </label>
+
+                {editingTicket.assignments.map((assignment, index) => (
+                  <div className="assignment-row" key={`${index}-${assignment.type}`}>
+                    <select value={assignment.type} onChange={(event) => updateAssignment(index, 'type', event.target.value)}>
+                      <option value="CONTRACT">Contract</option>
+                      <option value="SPOT">Spot</option>
+                    </select>
+                    {assignment.type === 'CONTRACT' ? (
+                      <select value={assignment.contract_id} onChange={(event) => updateAssignment(index, 'contract_id', event.target.value)}>
+                        <option value="">Choose contract</option>
+                        {contracts.map((contract) => (
+                          <option key={contract.id} value={contract.id}>{contract.contract_id} · {contract.buyer}</option>
+                        ))}
+                      </select>
+                    ) : <span className="spot-label">Spot grain</span>}
+                    <input
+                      inputMode="decimal"
+                      value={assignment.bushels}
+                      onChange={(event) => updateAssignment(index, 'bushels', event.target.value)}
+                      placeholder="Bushels"
+                    />
+                    {editingTicket.assignment_status === 'Split' && (
+                      <button type="button" onClick={() => removeAssignmentRow(index)}>Remove</button>
+                    )}
+                  </div>
+                ))}
+                {editingTicket.assignment_status === 'Split' && (
+                  <button className="secondary-button" type="button" onClick={addAssignmentRow}>Add Split Row</button>
+                )}
+              </div>
+
+              <div className="editor-section">
+                <h3>Payment Tracking</h3>
+                <div className="editor-grid">
+                  <label className="field">
+                    <span>Payment Status</span>
+                    <select value={editingTicket.payment_status} onChange={(event) => updateEditingTicket('payment_status', event.target.value)}>
+                      <option>Not paid</option>
+                      <option>Partially paid</option>
+                      <option>Paid</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Payment Date</span>
+                    <input type="date" value={editingTicket.payment_date} onChange={(event) => updateEditingTicket('payment_date', event.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>Amount Received</span>
+                    <input inputMode="decimal" value={editingTicket.amount_received} onChange={(event) => updateEditingTicket('amount_received', event.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>Check / ACH Reference</span>
+                    <input value={editingTicket.payment_reference} onChange={(event) => updateEditingTicket('payment_reference', event.target.value)} />
+                  </label>
+                  <label className="field wide-field">
+                    <span>Payment Notes</span>
+                    <textarea rows={2} value={editingTicket.payment_notes} onChange={(event) => updateEditingTicket('payment_notes', event.target.value)} />
+                  </label>
+                </div>
+              </div>
+
+              <button className="primary-button" type="submit">Save Ticket Changes</button>
+            </form>
+          )}
+
+          <div className="ticket-table-wrap">
             {ticketLogs.length === 0 ? (
               <div className="empty-history">No ticket logs found.</div>
             ) : (
-              ticketLogs.map((log) => (
-                <article className="ticket-log-card" key={log.id}>
-                  <div className="ticket-log-head">
-                    <div>
-                      <h3>{displayValue(log.ticket_number)}</h3>
-                      <p>{displayValue(log.date)} · {displayValue(log.crop)}</p>
-                    </div>
-                    <div className="ticket-log-actions">
-                      <strong>{displayValue(log.bushels)} bu</strong>
-                      <button type="button" onClick={() => removeTicketLog(log.id)} aria-label={`Delete ticket ${displayValue(log.ticket_number)}`}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                  <dl className="ticket-log-details">
-                    <div>
-                      <dt>Elevator/Grainery</dt>
-                      <dd>{displayValue(log.elevator)}</dd>
-                    </div>
-                    <div>
-                      <dt>Gross Weight</dt>
-                      <dd>{displayValue(log.gross_weight)}</dd>
-                    </div>
-                    <div>
-                      <dt>Tare Weight</dt>
-                      <dd>{displayValue(log.tare_weight)}</dd>
-                    </div>
-                    <div>
-                      <dt>Net Weight</dt>
-                      <dd>{displayValue(log.net_weight)}</dd>
-                    </div>
-                    <div>
-                      <dt>Moisture</dt>
-                      <dd>{displayValue(log.moisture)}</dd>
-                    </div>
-                    <div>
-                      <dt>Field/Bin</dt>
-                      <dd>{displayValue(log.field_or_bin)}</dd>
-                    </div>
-                    <div>
-                      <dt>Hauled By</dt>
-                      <dd>{displayValue(log.hauled_by)}</dd>
-                    </div>
-                    <div>
-                      <dt>Notes</dt>
-                      <dd>{displayValue(log.notes)}</dd>
-                    </div>
-                  </dl>
-                </article>
-              ))
+              <table className="ticket-table">
+                <thead>
+                  <tr>
+                    {[
+                      ['ticket_number', 'Ticket'], ['date', 'Date'], ['crop', 'Crop'], ['hauled_from', 'Hauled From'],
+                      ['delivered_to', 'Delivered To'], ['gross_weight', 'Gross'], ['tare_weight', 'Tare'],
+                      ['net_weight', 'Net'], ['bushels', 'Bushels'], ['moisture', 'Moisture'], ['price', 'Price'],
+                      ['revenue', 'Revenue'], ['hauled_by', 'Hauled By'], ['notes', 'Notes'],
+                      ['assignment_status', 'Assignment'], ['payment_status', 'Payment']
+                    ].map(([key, label]) => (
+                      <th key={key}><button type="button" onClick={() => toggleHistorySort(key)}>{label}</button></th>
+                    ))}
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedTicketLogs.map((log) => (
+                    <tr key={log.id}>
+                      <td className="primary-cell">{displayValue(log.ticket_number)}</td>
+                      <td>{displayValue(log.date)}</td>
+                      <td>{displayValue(log.crop)}</td>
+                      <td>{displayValue(log.hauled_from)}</td>
+                      <td>{displayValue(log.delivered_to)}</td>
+                      <td>{formatNumber(log.gross_weight)}</td>
+                      <td>{formatNumber(log.tare_weight)}</td>
+                      <td>{formatNumber(log.net_weight)}</td>
+                      <td>{formatNumber(log.bushels)}</td>
+                      <td>{formatNumber(log.moisture)}</td>
+                      <td>{formatCurrency(log.price)}</td>
+                      <td>{formatCurrency(log.revenue)}</td>
+                      <td>{displayValue(log.hauled_by)}</td>
+                      <td className="notes-cell">{displayValue(log.notes)}</td>
+                      <td><span className={`status-tag ${(log.assignment_status || 'Unassigned').toLowerCase()}`}>{log.assignment_status || 'Unassigned'}</span></td>
+                      <td><span className={`status-tag ${(log.payment_status || 'Not paid').toLowerCase().replaceAll(' ', '-')}`}>{log.payment_status || 'Not paid'}</span></td>
+                      <td>
+                        <div className="table-actions">
+                          <button type="button" onClick={() => startEditingTicket(log)}>Edit</button>
+                          <button className="danger-button" type="button" onClick={() => removeTicketLog(log.id)}>Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
+          </div>
+        </section>
+      )}
+
+      {activeView === 'contracts' && (
+        <section className="contracts-panel">
+          <div className="form-heading">
+            <h2>Grain Contracts</h2>
+            <p>Track contracted bushels and manually apply delivered tickets as elevator settlements are confirmed.</p>
+          </div>
+
+          <form className="contract-form" onSubmit={saveContract}>
+            <div className="field-grid">
+              <label className="field">
+                <span>Contract ID</span>
+                <input value={contractForm.contract_id} onChange={(event) => updateContractForm('contract_id', event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Buyer / Elevator</span>
+                <input value={contractForm.buyer} onChange={(event) => updateContractForm('buyer', event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Commodity</span>
+                <select value={contractForm.commodity} onChange={(event) => updateContractForm('commodity', event.target.value)}>
+                  <option value="">Choose crop</option>
+                  <option>Corn</option>
+                  <option>Beans</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Contracted Bushels</span>
+                <input inputMode="decimal" value={contractForm.contracted_bushels} onChange={(event) => updateContractForm('contracted_bushels', event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Contract Price</span>
+                <input inputMode="decimal" value={contractForm.contract_price} onChange={(event) => updateContractForm('contract_price', event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Delivery Window / Month</span>
+                <input value={contractForm.delivery_window} onChange={(event) => updateContractForm('delivery_window', event.target.value)} placeholder="October 2026" />
+              </label>
+              <label className="field">
+                <span>Status</span>
+                <select value={contractForm.status} onChange={(event) => updateContractForm('status', event.target.value)}>
+                  <option>Open</option>
+                  <option>Filled</option>
+                  <option>Closed</option>
+                  <option>Cancelled</option>
+                </select>
+              </label>
+              <label className="field wide-field">
+                <span>Notes</span>
+                <textarea rows={2} value={contractForm.notes} onChange={(event) => updateContractForm('notes', event.target.value)} />
+              </label>
+            </div>
+            <div className="inventory-actions">
+              <button type="submit">{editingContractId ? 'Update Contract' : 'Add Contract'}</button>
+              {editingContractId && <button type="button" onClick={resetContractForm}>Cancel Edit</button>}
+            </div>
+          </form>
+
+          <div className="contract-grid">
+            {contracts.length === 0 ? (
+              <div className="premium-empty">No contracts yet. Add the first contract above.</div>
+            ) : contracts.map((contract) => {
+              const progress = contract.contracted_bushels > 0
+                ? Math.min(100, (contract.delivered_applied_bushels / contract.contracted_bushels) * 100)
+                : 0;
+
+              return (
+                <article className="contract-card" key={contract.id}>
+                  <div className="contract-head">
+                    <div>
+                      <span>{contract.commodity} · {contract.status}</span>
+                      <h3>{contract.contract_id}</h3>
+                      <p>{contract.buyer}</p>
+                    </div>
+                    <strong>{formatCurrency(contract.contract_price)} / bu</strong>
+                  </div>
+                  <div className="contract-metrics">
+                    <div><span>Contracted</span><strong>{formatNumber(contract.contracted_bushels)} bu</strong></div>
+                    <div><span>Applied</span><strong>{formatNumber(contract.delivered_applied_bushels)} bu</strong></div>
+                    <div><span>Remaining</span><strong>{formatNumber(contract.remaining_bushels)} bu</strong></div>
+                  </div>
+                  <div className="capacity-bar"><span style={{ width: `${progress}%` }} /></div>
+                  <p className="contract-window">{displayValue(contract.delivery_window)} · {displayValue(contract.notes)}</p>
+                  <div className="inventory-actions">
+                    <button type="button" onClick={() => startEditingContract(contract)}>Edit</button>
+                    <button type="button" onClick={() => removeContract(contract.id)}>Delete</button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
       )}
@@ -1181,7 +1737,7 @@ function App() {
         <section className="inventory-panel">
           <div className="form-heading">
             <h2>Grain Bins</h2>
-            <p>Create bins and track inventory changes before ticket-based inventory starts in Step 3.</p>
+            <p>Create bins, monitor balances, and review every inventory adjustment.</p>
           </div>
 
           <form className="bin-form" onSubmit={saveBin}>
@@ -1296,7 +1852,7 @@ function App() {
                           <div className="transaction-row" key={transaction.id}>
                             <div>
                               <span>{transaction.transaction_type}</span>
-                              <strong>{formatNumber(transaction.previous_bin_balance)} -> {formatNumber(transaction.new_bin_balance)} bu</strong>
+                              <strong>{formatNumber(transaction.previous_bin_balance)} {'->'} {formatNumber(transaction.new_bin_balance)} bu</strong>
                               <small>{new Date(transaction.created_at).toLocaleString()}</small>
                             </div>
                             <button type="button" onClick={() => removeInventoryTransaction(transaction.id)}>Delete</button>
@@ -1316,7 +1872,7 @@ function App() {
         <>
       {isSuccess && (
         <section className="success-panel" aria-live="polite">
-          <p className="success-kicker">Saved to Google Sheets</p>
+          <p className="success-kicker">Saved to BinFlow</p>
           <h2>Ticket submitted successfully</h2>
           <button className="primary-button" type="button" onClick={resetForNextTicket}>
             Scan Another Ticket
@@ -1347,7 +1903,7 @@ function App() {
         <p className="status-text">{status}</p>
 
         {isLoadingDropdowns && (
-          <div className="notice">Loading shared dropdowns from Google Sheets...</div>
+          <div className="notice">Loading shared bins and drivers...</div>
         )}
 
         {dropdowns.missing_tabs.length > 0 && (
@@ -1398,6 +1954,11 @@ function App() {
 
         <div className="field-grid">
           <label className="field">
+            <span>{fieldLabels.ticket_number}</span>
+            <input type="text" value={ticket.ticket_number} onChange={(event) => updateField('ticket_number', event.target.value)} />
+          </label>
+
+          <label className="field">
             <span>{fieldLabels.date}</span>
             <input type="text" value={ticket.date} onChange={(event) => updateField('date', event.target.value)} />
           </label>
@@ -1407,9 +1968,11 @@ function App() {
             <input type="text" value={ticket.crop} onChange={(event) => updateField('crop', event.target.value)} />
           </label>
 
+          {renderDropdownField('hauled_from', dropdowns.bins, 'Choose Hauled From')}
+
           <label className="field">
-            <span>{fieldLabels.ticket_number}</span>
-            <input type="text" value={ticket.ticket_number} onChange={(event) => updateField('ticket_number', event.target.value)} />
+            <span>{fieldLabels.delivered_to}</span>
+            <input type="text" value={ticket.delivered_to} onChange={(event) => updateField('delivered_to', event.target.value)} placeholder="Read from ticket or type manually" />
           </label>
 
           <label className="field">
@@ -1418,9 +1981,10 @@ function App() {
           </label>
 
           <label className="field">
-            <span>{fieldLabels.delivered_to}</span>
-            <input type="text" value={ticket.delivered_to} onChange={(event) => updateField('delivered_to', event.target.value)} placeholder="Read from ticket or type manually" />
+            <span>{fieldLabels.price} <small>(optional)</small></span>
+            <input type="text" inputMode="decimal" value={ticket.price} onChange={(event) => updateField('price', event.target.value)} />
           </label>
+
           {renderDropdownField('hauled_by', dropdowns.haulers, 'Choose Hauled By')}
 
           <label className="field">
@@ -1428,7 +1992,10 @@ function App() {
             <input type="text" inputMode="decimal" value={ticket.moisture} onChange={(event) => updateField('moisture', event.target.value)} />
           </label>
 
-          {renderDropdownField('hauled_from', dropdowns.bins, 'Choose Hauled From')}
+          <label className="field wide-field">
+            <span>{fieldLabels.notes}</span>
+            <textarea rows={2} value={ticket.notes} onChange={(event) => updateField('notes', event.target.value)} />
+          </label>
         </div>
 
         <button className="submit-button" type="submit" disabled={isSubmitting || isExtracting}>

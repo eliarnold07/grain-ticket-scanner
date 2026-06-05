@@ -6,7 +6,7 @@ import OpenAI from 'openai';
 import { google } from 'googleapis';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { addTicketLog, deleteTicketLog, deleteTicketLogByInventoryTransactionId, getTicketLogSnapshot, listTicketLogs } from './ticketLogStore.js';
+import { addTicketLog, deleteTicketLog, deleteTicketLogByInventoryTransactionId, getTicketLogSnapshot, listTicketLogs, updateTicketLog } from './ticketLogStore.js';
 import {
   createBin,
   createInventoryTransaction,
@@ -19,6 +19,7 @@ import {
   updateBin
 } from './inventoryStore.js';
 import { createDriver, deleteDriver, listDrivers } from './driverStore.js';
+import { createContract, deleteContract, listContracts, updateContract } from './contractStore.js';
 
 const app = express();
 const upload = multer({
@@ -48,10 +49,15 @@ const ticketFields = [
   'crop',
   'ticket_number',
   'bushels',
+  'gross_weight',
+  'tare_weight',
+  'net_weight',
   'delivered_to',
   'hauled_by',
   'moisture',
-  'hauled_from'
+  'hauled_from',
+  'price',
+  'notes'
 ];
 
 const dropdownTabs = {
@@ -146,7 +152,11 @@ function normalizeTicketData(data) {
 
   clean.crop = normalizeCrop(clean.crop);
   clean.bushels = normalizeDecimal(clean.bushels);
+  clean.gross_weight = normalizeDecimal(clean.gross_weight);
+  clean.tare_weight = normalizeDecimal(clean.tare_weight);
+  clean.net_weight = normalizeDecimal(clean.net_weight);
   clean.moisture = normalizeDecimal(clean.moisture);
+  clean.price = normalizeDecimal(clean.price);
   clean.delivered_to = clean.delivered_to;
   clean.hauled_by = normalizeKnownOption(clean.hauled_by, defaultDropdownValues.haulers);
   clean.hauled_from = normalizeKnownOption(clean.hauled_from, defaultDropdownValues.bins);
@@ -180,6 +190,43 @@ function sheetText(value) {
 function numberValue(value) {
   const number = Number(String(value || '').replace(/,/g, ''));
   return Number.isFinite(number) ? number : 0;
+}
+
+async function validateTicketAccounting(input) {
+  const statuses = new Set(['Unassigned', 'Spot', 'Contract', 'Split']);
+  const paymentStatuses = new Set(['Not paid', 'Partially paid', 'Paid']);
+  const assignmentStatus = cleanSpaces(input.assignment_status || 'Unassigned');
+  const paymentStatus = cleanSpaces(input.payment_status || 'Not paid');
+  const assignments = Array.isArray(input.assignments) ? input.assignments : [];
+
+  if (!statuses.has(assignmentStatus)) throw new Error('Invalid assignment status.');
+  if (!paymentStatuses.has(paymentStatus)) throw new Error('Invalid payment status.');
+
+  if (assignmentStatus === 'Unassigned' && assignments.length > 0) {
+    throw new Error('Unassigned tickets cannot contain assignment rows.');
+  }
+
+  if (assignmentStatus !== 'Unassigned') {
+    const assignedTotal = assignments.reduce((sum, assignment) => sum + numberValue(assignment.bushels), 0);
+    if (Math.abs(assignedTotal - numberValue(input.bushels)) > 0.01) {
+      throw new Error('Assigned bushels must equal the ticket bushels.');
+    }
+  }
+
+  const contractAssignments = assignments.filter((assignment) => cleanSpaces(assignment.type).toUpperCase() === 'CONTRACT');
+  if (contractAssignments.some((assignment) => !cleanSpaces(assignment.contract_id))) {
+    throw new Error('Choose a contract for every contract assignment.');
+  }
+
+  if (contractAssignments.length > 0) {
+    const ticketLogs = await getTicketLogSnapshot();
+    const contracts = await listContracts(ticketLogs);
+    const contractIds = new Set(contracts.map((contract) => contract.id));
+
+    if (contractAssignments.some((assignment) => !contractIds.has(assignment.contract_id))) {
+      throw new Error('One or more selected contracts no longer exist.');
+    }
+  }
 }
 
 function logError(label, error) {
@@ -450,6 +497,7 @@ app.get('/api/dashboard', async (_req, res) => {
       getInventorySnapshot(),
       getTicketLogSnapshot()
     ]);
+    const contracts = await listContracts(ticketLogs);
     const bins = inventory.bins;
     const transactions = inventory.transactions;
     const cornBins = bins.filter((bin) => bin.crop_type === 'Corn');
@@ -465,6 +513,19 @@ app.get('/api/dashboard', async (_req, res) => {
       { crop: 'Beans', bushels: totalBeanInventory }
     ];
     const totalCapacity = bins.reduce((sum, bin) => sum + numberValue(bin.estimated_capacity_bushels), 0);
+    const now = new Date();
+    const unpaidTickets = ticketLogs.filter((log) => log.payment_status !== 'Paid');
+    const unpaidDeliveredBushels = unpaidTickets.reduce((sum, log) => sum + numberValue(log.bushels), 0);
+    const unpaidEstimatedDollars = unpaidTickets.reduce((sum, log) => (
+      sum + Math.max(0, numberValue(log.revenue) - numberValue(log.amount_received))
+    ), 0);
+    const paymentsReceivedThisMonth = ticketLogs
+      .filter((log) => {
+        if (!log.payment_date) return false;
+        const paymentDate = new Date(log.payment_date);
+        return paymentDate.getFullYear() === now.getFullYear() && paymentDate.getMonth() === now.getMonth();
+      })
+      .reduce((sum, log) => sum + numberValue(log.amount_received), 0);
     const recentActivities = [
       ...ticketLogs.slice(0, 12).map((log) => ({
         id: `ticket-${log.id}`,
@@ -492,6 +553,13 @@ app.get('/api/dashboard', async (_req, res) => {
         total_tickets_scanned: ticketLogs.length,
         total_bushels_sold: totalBushelsSold,
         active_bins: bins.length
+      },
+      finance: {
+        unpaid_delivered_bushels: unpaidDeliveredBushels,
+        unpaid_estimated_dollars: unpaidEstimatedDollars,
+        payments_received_this_month: paymentsReceivedThisMonth,
+        contracts_with_remaining_bushels: contracts.filter((contract) => contract.remaining_bushels > 0 && contract.status !== 'Closed').length,
+        unassigned_tickets: ticketLogs.filter((log) => log.assignment_status === 'Unassigned').length
       },
       charts: {
         inventory_by_crop: inventoryByCrop,
@@ -525,7 +593,9 @@ app.get('/api/ticket-logs', async (req, res) => {
       date: req.query.date,
       crop: req.query.crop,
       ticket_number: req.query.ticket_number,
-      elevator: req.query.elevator
+      elevator: req.query.elevator,
+      assignment_status: req.query.assignment_status,
+      payment_status: req.query.payment_status
     });
 
     res.json({
@@ -536,6 +606,20 @@ app.get('/api/ticket-logs', async (req, res) => {
     logError('Ticket log fetch failed', error);
     res.status(500).json({
       error: 'Could not load ticket history.',
+      detail: error.message
+    });
+  }
+});
+
+app.put('/api/ticket-logs/:id', async (req, res) => {
+  try {
+    await validateTicketAccounting(req.body || {});
+    const ticket = await updateTicketLog(req.params.id, req.body || {});
+    res.json({ ticket });
+  } catch (error) {
+    logError('Ticket log update failed', error);
+    res.status(400).json({
+      error: 'Could not update ticket log.',
       detail: error.message
     });
   }
@@ -559,6 +643,47 @@ app.delete('/api/ticket-logs/:id', async (req, res) => {
       error: 'Could not delete ticket log.',
       detail: error.message
     });
+  }
+});
+
+app.get('/api/contracts', async (_req, res) => {
+  try {
+    const ticketLogs = await getTicketLogSnapshot();
+    res.json({ contracts: await listContracts(ticketLogs) });
+  } catch (error) {
+    logError('Contract fetch failed', error);
+    res.status(500).json({ error: 'Could not load contracts.', detail: error.message });
+  }
+});
+
+app.post('/api/contracts', async (req, res) => {
+  try {
+    const ticketLogs = await getTicketLogSnapshot();
+    res.status(201).json({ contract: await createContract(req.body || {}, ticketLogs) });
+  } catch (error) {
+    logError('Contract create failed', error);
+    res.status(400).json({ error: 'Could not create contract.', detail: error.message });
+  }
+});
+
+app.put('/api/contracts/:id', async (req, res) => {
+  try {
+    const ticketLogs = await getTicketLogSnapshot();
+    res.json({ contract: await updateContract(req.params.id, req.body || {}, ticketLogs) });
+  } catch (error) {
+    logError('Contract update failed', error);
+    res.status(400).json({ error: 'Could not update contract.', detail: error.message });
+  }
+});
+
+app.delete('/api/contracts/:id', async (req, res) => {
+  try {
+    const ticketLogs = await getTicketLogSnapshot();
+    await deleteContract(req.params.id, ticketLogs);
+    res.json({ ok: true });
+  } catch (error) {
+    logError('Contract delete failed', error);
+    res.status(400).json({ error: 'Could not delete contract.', detail: error.message });
   }
 });
 
@@ -759,6 +884,9 @@ app.post('/api/extract-ticket', scanUpload, async (req, res) => {
                 'For date, use the shipment or ticket date.',
                 'For crop, return exactly Corn or Beans. Interpret yellow corn, corn, soybeans, soybean, beans, or similar wording into one of those two values.',
                 'For bushels, prefer net bushels if visible; otherwise use the clearest bushel amount.',
+                'Extract gross_weight, tare_weight, and net_weight in pounds when visible.',
+                'Extract price only when a clear per-bushel price is printed.',
+                'Put any useful ticket remarks in notes.',
                 destinationHint,
                 'Always leave hauled_by empty because the user will choose or fill it manually.',
                 'Always leave hauled_from empty because the user will choose or fill it manually.'
@@ -856,7 +984,8 @@ app.post('/api/submit-ticket', async (req, res) => {
           bushels: ticket.bushels,
           cropType: ticket.crop,
           ticketId: ticket.ticket_number,
-          notes: `Ticket sale ${ticket.ticket_number}`
+          notes: `Ticket sale ${ticket.ticket_number}`,
+          allowOverdraw: req.body?.allow_bin_overdraw === true
         });
 
         inventoryTransactionId = inventoryResult?.transaction?.id || '';
@@ -892,11 +1021,16 @@ app.post('/api/submit-ticket', async (req, res) => {
     });
   } catch (error) {
     logError('Ticket submit failed', error);
-    res.status(500).json({
+    const isOverdraw = error.code === 'BIN_INVENTORY_OVERDRAW';
+    res.status(isOverdraw ? 409 : 500).json({
       error: isLocalTicketStorage()
         ? 'Could not save ticket data locally.'
         : 'Could not save ticket data to Google Sheets.',
-      detail: error.message
+      detail: error.message,
+      code: error.code,
+      bin_name: error.binName,
+      current_bushels: error.currentBushels,
+      ticket_bushels: error.ticketBushels
     });
   }
 });

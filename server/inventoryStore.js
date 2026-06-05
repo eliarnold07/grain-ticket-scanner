@@ -74,7 +74,7 @@ function normalizeCrop(value) {
 
 function publicBin(bin) {
   const capacity = numeric(bin.estimated_capacity_bushels);
-  const current = numeric(bin.current_bushels);
+  const current = Math.max(0, numeric(bin.current_bushels));
 
   return {
     ...bin,
@@ -84,15 +84,17 @@ function publicBin(bin) {
   };
 }
 
-function buildTransaction({ bin, type, amount, previousBalance, newBalance, ticketId = '', notes = '' }) {
+function buildTransaction({ bin, type, amount, appliedAmount = amount, previousBalance, newBalance, ticketId = '', notes = '', exceededEstimate = false }) {
   return {
     id: randomUUID(),
     bin_id: bin.id,
     transaction_type: type,
     crop_type: bin.crop_type,
     bushel_amount: numeric(amount),
+    applied_bushel_amount: numeric(appliedAmount),
     previous_bin_balance: numeric(previousBalance),
     new_bin_balance: numeric(newBalance),
+    exceeded_estimated_inventory: Boolean(exceededEstimate),
     ticket_id: clean(ticketId),
     notes: clean(notes),
     created_at: new Date().toISOString()
@@ -215,7 +217,7 @@ export async function createInventoryTransaction(input) {
   if (type === 'ADD_GRAIN') {
     newBalance = previousBalance + amount;
   } else if (type === 'REMOVE_GRAIN' || type === 'TICKET_SALE') {
-    newBalance = previousBalance - amount;
+    newBalance = Math.max(0, previousBalance - amount);
   } else if (type === 'MANUAL_ADJUSTMENT') {
     newBalance = amount;
   }
@@ -224,6 +226,9 @@ export async function createInventoryTransaction(input) {
     bin,
     type,
     amount,
+    appliedAmount: type === 'REMOVE_GRAIN' || type === 'TICKET_SALE'
+      ? Math.min(previousBalance, amount)
+      : amount,
     previousBalance,
     newBalance,
     ticketId: input.ticket_id,
@@ -242,7 +247,7 @@ export async function createInventoryTransaction(input) {
   };
 }
 
-export async function createTicketSaleTransaction({ binName, bushels, cropType, ticketId, notes }) {
+export async function createTicketSaleTransaction({ binName, bushels, cropType, ticketId, notes, allowOverdraw = false }) {
   const store = await readStore();
   const cleanBinName = clean(binName);
   const bin = store.bins.find((candidate) => candidate.bin_name.toLowerCase() === cleanBinName.toLowerCase());
@@ -255,17 +260,31 @@ export async function createTicketSaleTransaction({ binName, bushels, cropType, 
     bin.crop_type = normalizeCrop(cropType);
   }
 
-  const previousBalance = numeric(bin.current_bushels);
+  const previousBalance = Math.max(0, numeric(bin.current_bushels));
   const amount = numeric(bushels);
-  const newBalance = previousBalance - amount;
+  const exceedsEstimate = amount > previousBalance;
+
+  if (exceedsEstimate && !allowOverdraw) {
+    const error = new Error('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
+    error.code = 'BIN_INVENTORY_OVERDRAW';
+    error.binName = bin.bin_name;
+    error.currentBushels = previousBalance;
+    error.ticketBushels = amount;
+    throw error;
+  }
+
+  const appliedAmount = Math.min(previousBalance, amount);
+  const newBalance = Math.max(0, previousBalance - amount);
   const transaction = buildTransaction({
     bin,
     type: 'TICKET_SALE',
     amount,
+    appliedAmount,
     previousBalance,
     newBalance,
     ticketId,
-    notes
+    notes,
+    exceededEstimate: exceedsEstimate
   });
 
   bin.current_bushels = newBalance;
@@ -303,7 +322,10 @@ export async function deleteInventoryTransaction(transactionId) {
       if (item.transaction_type === 'ADD_GRAIN') {
         balance += numeric(item.bushel_amount);
       } else if (item.transaction_type === 'REMOVE_GRAIN' || item.transaction_type === 'TICKET_SALE') {
-        balance -= numeric(item.bushel_amount);
+        const appliedAmount = item.applied_bushel_amount === undefined
+          ? Math.min(balance, numeric(item.bushel_amount))
+          : numeric(item.applied_bushel_amount);
+        balance = Math.max(0, balance - appliedAmount);
       } else if (item.transaction_type === 'MANUAL_ADJUSTMENT') {
         balance = numeric(item.bushel_amount);
       }
