@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
 
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
@@ -24,18 +25,6 @@ const fieldLabels = {
 };
 
 const fields = Object.keys(fieldLabels);
-const scannerFields = [
-  'ticket_number',
-  'date',
-  'crop',
-  'hauled_from',
-  'delivered_to',
-  'bushels',
-  'price',
-  'hauled_by',
-  'notes',
-  'moisture'
-];
 const blankBinForm = {
   bin_name: '',
   crop_type: '',
@@ -194,11 +183,59 @@ function percentLabel(value) {
   return value === null || value === undefined ? '-' : `${Math.round(value)}%`;
 }
 
+function emptyDashboard() {
+  return {
+    kpis: {
+      total_corn_inventory: 0,
+      total_bean_inventory: 0,
+      total_bushels_stored: 0,
+      total_tickets_scanned: 0,
+      total_bushels_sold: 0,
+      active_bins: 0
+    },
+    finance: {
+      unpaid_delivered_bushels: 0,
+      unpaid_estimated_dollars: 0,
+      payments_received_this_month: 0,
+      contracts_with_remaining_bushels: 0,
+      unassigned_tickets: 0
+    },
+    charts: {
+      inventory_by_crop: [
+        { crop: 'Corn', bushels: 0 },
+        { crop: 'Beans', bushels: 0 }
+      ],
+      storage_utilization: {
+        current_bushels: 0,
+        estimated_capacity: 0,
+        percent_full: null
+      },
+      recent_ticket_activity: []
+    },
+    bin_overview: [],
+    recent_activity: []
+  };
+}
+
 function App() {
+  const [session, setSession] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const sessionRef = useRef(null);
+  const refreshPromiseRef = useRef(null);
+  const terminalAuthFailureRef = useRef(false);
+  const [farm, setFarm] = useState(null);
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({ farmName: '', email: '', password: '' });
+  const [authStatus, setAuthStatus] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [ticket, setTicket] = useState(emptyTicket);
+  const [scannerAssignment, setScannerAssignment] = useState({
+    status: 'Spot',
+    contractId: ''
+  });
   const [duplicate, setDuplicate] = useState(null);
   const [dropdowns, setDropdowns] = useState({
     bins: [],
@@ -261,44 +298,64 @@ function App() {
       return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
     });
   }, [ticketLogs, historySort]);
-  const [dashboard, setDashboard] = useState({
-    kpis: {
-      total_corn_inventory: 0,
-      total_bean_inventory: 0,
-      total_bushels_stored: 0,
-      total_tickets_scanned: 0,
-      total_bushels_sold: 0,
-      active_bins: 0
-    },
-    finance: {
-      unpaid_delivered_bushels: 0,
-      unpaid_estimated_dollars: 0,
-      payments_received_this_month: 0,
-      contracts_with_remaining_bushels: 0,
-      unassigned_tickets: 0
-    },
-    charts: {
-      inventory_by_crop: [
-        { crop: 'Corn', bushels: 0 },
-        { crop: 'Beans', bushels: 0 }
-      ],
-      storage_utilization: {
-        current_bushels: 0,
-        estimated_capacity: 0,
-        percent_full: null
-      },
-      recent_ticket_activity: []
-    },
-    bin_overview: [],
-    recent_activity: []
-  });
+  const outstandingContracts = useMemo(() => {
+    const ticketCrop = String(ticket.crop || '').trim().toLowerCase();
 
-  const filledCount = useMemo(
-    () => scannerFields.filter((field) => ticket[field]?.trim()).length,
-    [ticket]
-  );
+    return contracts.filter((contract) => {
+      const status = String(contract.status || '').toLowerCase();
+      const commodity = String(contract.commodity || '').trim().toLowerCase();
+      const isOpen = Number(contract.remaining_bushels) > 0 && !['closed', 'cancelled'].includes(status);
+      return isOpen && (!ticketCrop || !commodity || commodity === ticketCrop);
+    });
+  }, [contracts, ticket.crop]);
+  const [dashboard, setDashboard] = useState(emptyDashboard);
+
+  const isAuthenticated = Boolean(session?.access_token);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function initializeAuth() {
+      const storedSession = getStoredSession();
+
+      if (!storedSession?.access_token) {
+        if (!cancelled) setIsAuthReady(true);
+        return;
+      }
+
+      try {
+        const readySession = isSessionExpired(storedSession)
+          ? await refreshSession(storedSession.refresh_token)
+          : storedSession;
+
+        if (!cancelled) {
+          sessionRef.current = readySession;
+          terminalAuthFailureRef.current = false;
+          setSession(readySession);
+        }
+      } catch {
+        storeSession(null);
+        if (!cancelled) {
+          sessionRef.current = null;
+          setSession(null);
+        }
+      } finally {
+        if (!cancelled) setIsAuthReady(true);
+      }
+    }
+
+    initializeAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady || !isAuthenticated) {
+      return;
+    }
+
+    loadFarmSession();
     loadDropdowns();
     loadDashboard({ silent: true });
     loadTicketHistory({ silent: true });
@@ -314,16 +371,138 @@ function App() {
       window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
     };
-  }, []);
+  }, [isAuthReady, isAuthenticated]);
+
+  async function apiFetch(path, options = {}, retry = true) {
+    const activeSession = sessionRef.current;
+    if (!activeSession?.access_token || terminalAuthFailureRef.current) {
+      throw new Error('Please log in to continue.');
+    }
+
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${activeSession.access_token}`
+      }
+    });
+
+    if (response.status !== 401 || !retry || !activeSession.refresh_token) {
+      return response;
+    }
+
+    try {
+      if (!refreshPromiseRef.current) {
+        refreshPromiseRef.current = refreshSession(activeSession.refresh_token)
+          .then((nextSession) => {
+            sessionRef.current = nextSession;
+            setSession(nextSession);
+            return nextSession;
+          })
+          .finally(() => {
+            refreshPromiseRef.current = null;
+          });
+      }
+
+      const nextSession = await refreshPromiseRef.current;
+      const retryResponse = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          Authorization: `Bearer ${nextSession.access_token}`
+        }
+      });
+
+      if (retryResponse.status === 401) {
+        endInvalidSession();
+      }
+
+      return retryResponse;
+    } catch (error) {
+      endInvalidSession();
+      throw error;
+    }
+  }
+
+  function endInvalidSession() {
+    if (terminalAuthFailureRef.current) return;
+    terminalAuthFailureRef.current = true;
+    refreshPromiseRef.current = null;
+    sessionRef.current = null;
+    storeSession(null);
+    setSession(null);
+    setFarm(null);
+    setAuthStatus('Your session expired. Please log in again.');
+  }
+
+  async function loadFarmSession() {
+    try {
+      const response = await apiFetch('/api/session');
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await response.json();
+      setFarm(data.farm);
+    } catch (error) {
+      setStatus(cleanMessage(error));
+    }
+  }
+
+  function updateAuthField(field, value) {
+    setAuthForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    setIsAuthenticating(true);
+    setAuthStatus(authMode === 'signup' ? 'Creating farm account...' : 'Signing in...');
+
+    try {
+      const data = authMode === 'signup'
+        ? await signUpFarm(authForm)
+        : await signInFarm(authForm);
+
+      if (!data.access_token) {
+        setAuthStatus('Account created. Check your email to confirm the account, then log in.');
+        setAuthMode('login');
+        return;
+      }
+
+      sessionRef.current = data;
+      terminalAuthFailureRef.current = false;
+      setSession(data);
+      setAuthStatus('');
+    } catch (error) {
+      setAuthStatus(cleanMessage(error));
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  async function logout() {
+    const activeSession = sessionRef.current;
+    terminalAuthFailureRef.current = true;
+    refreshPromiseRef.current = null;
+    sessionRef.current = null;
+    await signOutFarm(activeSession?.access_token);
+    setSession(null);
+    setFarm(null);
+    setTicketLogs([]);
+    setBins([]);
+    setContracts([]);
+    setDrivers([]);
+    setDropdowns({ bins: [], haulers: [], destinations: [], missing_tabs: [] });
+    setDashboard(emptyDashboard());
+    resetForNextTicket();
+    setActiveView('dashboard');
+  }
 
   useEffect(() => {
-    if (activeView === 'dashboard') {
+    if (isAuthReady && isAuthenticated && activeView === 'dashboard') {
       loadDashboard({ silent: true });
     }
-  }, [activeView]);
+  }, [activeView, isAuthReady, isAuthenticated]);
 
   useEffect(() => {
-    if (activeView !== 'history') {
+    if (!isAuthReady || !isAuthenticated || activeView !== 'history') {
       return;
     }
 
@@ -332,7 +511,7 @@ function App() {
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeView, historyFilters]);
+  }, [activeView, historyFilters, isAuthReady, isAuthenticated]);
 
   async function loadDropdowns(options = {}) {
     if (!options.silent) {
@@ -340,7 +519,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/dropdowns`);
+      const response = await apiFetch('/api/dropdowns');
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
@@ -375,7 +554,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/dashboard`);
+      const response = await apiFetch('/api/dashboard');
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
@@ -410,7 +589,7 @@ function App() {
     const query = params.toString();
 
     try {
-      const response = await fetch(`${API_BASE}/api/ticket-logs${query ? `?${query}` : ''}`);
+      const response = await apiFetch(`/api/ticket-logs${query ? `?${query}` : ''}`);
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
@@ -431,7 +610,7 @@ function App() {
 
   async function loadContracts(options = {}) {
     try {
-      const response = await fetch(`${API_BASE}/api/contracts`);
+      const response = await apiFetch('/api/contracts');
       if (!response.ok) throw new Error(await readErrorResponse(response));
       const data = await response.json();
       setContracts(data.contracts || []);
@@ -504,7 +683,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/ticket-logs/${editingTicket.id}`, {
+      const response = await apiFetch(`/api/ticket-logs/${editingTicket.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingTicket)
@@ -547,7 +726,7 @@ function App() {
     const editing = Boolean(editingContractId);
 
     try {
-      const response = await fetch(`${API_BASE}/api/contracts${editing ? `/${editingContractId}` : ''}`, {
+      const response = await apiFetch(`/api/contracts${editing ? `/${editingContractId}` : ''}`, {
         method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(contractForm)
@@ -566,7 +745,7 @@ function App() {
     if (!window.confirm('Delete this contract?')) return;
 
     try {
-      const response = await fetch(`${API_BASE}/api/contracts/${id}`, { method: 'DELETE' });
+      const response = await apiFetch(`/api/contracts/${id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error(await readErrorResponse(response));
       await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
       setStatus('Contract deleted.');
@@ -611,7 +790,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/ticket-logs/${logId}`, {
+      const response = await apiFetch(`/api/ticket-logs/${logId}`, {
         method: 'DELETE'
       });
 
@@ -632,7 +811,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/bins`);
+      const response = await apiFetch('/api/bins');
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
@@ -657,7 +836,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/drivers`);
+      const response = await apiFetch('/api/drivers');
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
@@ -680,7 +859,7 @@ function App() {
     event.preventDefault();
 
     try {
-      const response = await fetch(`${API_BASE}/api/drivers`, {
+      const response = await apiFetch('/api/drivers', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -702,7 +881,7 @@ function App() {
 
   async function removeDriver(driverId) {
     try {
-      const response = await fetch(`${API_BASE}/api/drivers/${driverId}`, {
+      const response = await apiFetch(`/api/drivers/${driverId}`, {
         method: 'DELETE'
       });
 
@@ -746,7 +925,7 @@ function App() {
     const isEditing = Boolean(editingBinId);
 
     try {
-      const response = await fetch(`${API_BASE}/api/bins${isEditing ? `/${editingBinId}` : ''}`, {
+      const response = await apiFetch(`/api/bins${isEditing ? `/${editingBinId}` : ''}`, {
         method: isEditing ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -774,7 +953,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/bins/${binId}`, {
+      const response = await apiFetch(`/api/bins/${binId}`, {
         method: 'DELETE'
       });
 
@@ -808,7 +987,7 @@ function App() {
     const form = transactionFormFor(binId);
 
     try {
-      const response = await fetch(`${API_BASE}/api/inventory-transactions`, {
+      const response = await apiFetch('/api/inventory-transactions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -842,7 +1021,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/inventory-transactions/${transactionId}`, {
+      const response = await apiFetch(`/api/inventory-transactions/${transactionId}`, {
         method: 'DELETE'
       });
 
@@ -884,6 +1063,7 @@ function App() {
     setSelectedFile(null);
     setPreviewUrl('');
     setTicket(emptyTicket());
+    setScannerAssignment({ status: 'Spot', contractId: '' });
     setOtherValues({
       delivered_to: '',
       hauled_by: '',
@@ -993,7 +1173,7 @@ function App() {
       formData.append('ticketImage', uploadFile);
       setStatus('Reading ticket image...');
 
-      const response = await fetch(`${API_BASE}/api/extract-ticket`, {
+      const response = await apiFetch('/api/extract-ticket', {
         method: 'POST',
         body: formData
       });
@@ -1026,6 +1206,11 @@ function App() {
       return;
     }
 
+    if (scannerAssignment.status === 'Contract' && !scannerAssignment.contractId) {
+      setStatus('Choose a contract before submitting this ticket.');
+      return;
+    }
+
     const selectedBin = bins.find((bin) => bin.bin_name.toLowerCase() === ticket.hauled_from.trim().toLowerCase());
     const exceedsEstimate = selectedBin && Number(ticket.bushels) > Number(selectedBin.current_bushels);
     let allowBinOverdraw = false;
@@ -1044,11 +1229,31 @@ function App() {
     setStatus('Submitting reviewed data...');
 
     try {
-      const sendTicket = (confirmedOverdraw) => fetch(`${API_BASE}/api/submit-ticket`, {
+      const assignment = scannerAssignment.status === 'Contract'
+        ? {
+            assignment_status: 'Contract',
+            assignments: [{
+              type: 'CONTRACT',
+              contract_id: scannerAssignment.contractId,
+              bushels: Number(ticket.bushels) || 0
+            }]
+          }
+        : {
+            assignment_status: 'Spot',
+            assignments: [{
+              type: 'SPOT',
+              contract_id: '',
+              bushels: Number(ticket.bushels) || 0
+            }]
+          };
+      const sendTicket = (confirmedOverdraw) => apiFetch('/api/submit-ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ticket,
+          ticket: {
+            ...ticket,
+            ...assignment
+          },
           allow_bin_overdraw: confirmedOverdraw
         })
       });
@@ -1082,6 +1287,7 @@ function App() {
       setSelectedFile(null);
       setPreviewUrl('');
       setTicket(emptyTicket());
+      setScannerAssignment({ status: 'Spot', contractId: '' });
       setOtherValues({
         delivered_to: '',
         hauled_by: '',
@@ -1142,6 +1348,58 @@ function App() {
     );
   }
 
+  if (!isAuthReady) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card auth-loading">
+          <p className="eyebrow">BinFlow</p>
+          <h2>Loading farm account...</h2>
+        </section>
+      </main>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-brand">
+          <p className="eyebrow">Private farm operations</p>
+          <h1>BinFlow</h1>
+          <p>Tickets, grain inventory, contracts, and payments kept separate for your farm.</p>
+        </section>
+
+        <form className="auth-card" onSubmit={submitAuth}>
+          <div className="auth-tabs">
+            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Log In</button>
+            <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Create Farm Account</button>
+          </div>
+          <div className="form-heading">
+            <h2>{authMode === 'signup' ? 'Start a farm account' : 'Welcome back'}</h2>
+            <p>{authMode === 'signup' ? 'One shared login for your farm during private beta.' : 'Use your farm’s shared account.'}</p>
+          </div>
+          {authMode === 'signup' && (
+            <label className="field">
+              <span>Farm Name</span>
+              <input value={authForm.farmName} onChange={(event) => updateAuthField('farmName', event.target.value)} required />
+            </label>
+          )}
+          <label className="field">
+            <span>Email</span>
+            <input type="email" value={authForm.email} onChange={(event) => updateAuthField('email', event.target.value)} required />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input type="password" minLength={8} value={authForm.password} onChange={(event) => updateAuthField('password', event.target.value)} required />
+          </label>
+          <button className="primary-button" type="submit" disabled={isAuthenticating}>
+            {isAuthenticating ? 'Please wait...' : authMode === 'signup' ? 'Create Farm Account' : 'Log In'}
+          </button>
+          {authStatus && <div className="notice">{authStatus}</div>}
+        </form>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="header-band">
@@ -1149,7 +1407,13 @@ function App() {
           <p className="eyebrow">Grain operations platform</p>
           <h1>BinFlow</h1>
         </div>
-        <div className="status-pill">{filledCount}/{scannerFields.length} fields</div>
+        <div className="account-tools">
+          <div>
+            <strong>{farm?.name || 'Farm account'}</strong>
+            <span>{session.user?.email}</span>
+          </div>
+          <button type="button" onClick={logout}>Log Out</button>
+        </div>
       </section>
 
       <nav className="view-tabs" aria-label="App views">
@@ -1237,7 +1501,7 @@ function App() {
             <article className="kpi-card">
               <span>Total Tickets Scanned</span>
               <strong>{formatNumber(dashboard.kpis.total_tickets_scanned)}</strong>
-              <small>local ticket logs</small>
+              <small>farm ticket records</small>
             </article>
             <article className="kpi-card">
               <span>Total Bushels Sold</span>
@@ -1991,6 +2255,49 @@ function App() {
             <span>{fieldLabels.moisture}</span>
             <input type="text" inputMode="decimal" value={ticket.moisture} onChange={(event) => updateField('moisture', event.target.value)} />
           </label>
+
+          <fieldset className="sale-assignment wide-field">
+            <legend>Sale Type</legend>
+            <div className="segmented-control">
+              <button
+                type="button"
+                className={scannerAssignment.status === 'Spot' ? 'active' : ''}
+                onClick={() => setScannerAssignment({ status: 'Spot', contractId: '' })}
+              >
+                Spot
+              </button>
+              <button
+                type="button"
+                className={scannerAssignment.status === 'Contract' ? 'active' : ''}
+                onClick={() => setScannerAssignment((current) => ({ ...current, status: 'Contract' }))}
+              >
+                Contract
+              </button>
+            </div>
+
+            {scannerAssignment.status === 'Contract' && (
+              <label className="field contract-picker">
+                <span>Apply to Contract</span>
+                <select
+                  value={scannerAssignment.contractId}
+                  onChange={(event) => setScannerAssignment({
+                    status: 'Contract',
+                    contractId: event.target.value
+                  })}
+                >
+                  <option value="">Choose an outstanding contract</option>
+                  {outstandingContracts.map((contract) => (
+                    <option key={contract.id} value={contract.id}>
+                      {contract.contract_id} · {contract.buyer} · {formatNumber(contract.remaining_bushels)} bu remaining
+                    </option>
+                  ))}
+                </select>
+                {outstandingContracts.length === 0 && (
+                  <small className="field-help">No outstanding {ticket.crop || 'grain'} contracts are available.</small>
+                )}
+              </label>
+            )}
+          </fieldset>
 
           <label className="field wide-field">
             <span>{fieldLabels.notes}</span>

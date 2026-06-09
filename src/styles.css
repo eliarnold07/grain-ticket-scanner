@@ -16,6 +16,66 @@ body {
   min-width: 320px;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+  gap: 22px;
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: 22px;
+}
+
+.auth-brand {
+  max-width: 560px;
+}
+
+.auth-brand h1 {
+  margin-bottom: 14px;
+}
+
+.auth-brand p:last-child {
+  color: #526255;
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #ded8c9;
+  border-radius: 8px;
+  padding: 18px;
+  background: #ffffff;
+  box-shadow: 0 16px 42px rgba(34, 43, 31, 0.12);
+}
+
+.auth-loading {
+  text-align: center;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  border: 1px solid #d8d2c2;
+  border-radius: 8px;
+  padding: 5px;
+}
+
+.auth-tabs button {
+  min-height: 44px;
+  border-radius: 6px;
+  background: transparent;
+  color: #415045;
+  font-weight: 800;
+}
+
+.auth-tabs button.active {
+  background: #265d3a;
+  color: #ffffff;
+}
+
 button,
 input,
 select,
@@ -83,6 +143,40 @@ h2 {
   color: #415045;
   font-size: 0.88rem;
   font-weight: 700;
+}
+
+.account-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.account-tools div {
+  display: grid;
+  text-align: right;
+}
+
+.account-tools strong {
+  font-size: 0.88rem;
+}
+
+.account-tools span {
+  max-width: 180px;
+  overflow: hidden;
+  color: #647065;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-tools button {
+  min-height: 40px;
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #39493d;
+  color: #ffffff;
+  font-weight: 800;
 }
 
 .capture-panel,
@@ -558,6 +652,49 @@ h2 {
   color: #6a715f;
   font-size: 0.84rem;
   line-height: 1.35;
+}
+
+.sale-assignment {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #cbc5b7;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8faf7;
+}
+
+.sale-assignment legend {
+  padding: 0 5px;
+  color: #37463c;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  border: 1px solid #c7d0c4;
+  border-radius: 8px;
+  padding: 5px;
+  background: #ffffff;
+}
+
+.segmented-control button {
+  min-height: 46px;
+  border-radius: 6px;
+  background: transparent;
+  color: #415045;
+  font-weight: 850;
+}
+
+.segmented-control button.active {
+  background: #265d3a;
+  color: #ffffff;
+}
+
+.contract-picker {
+  margin-top: 12px;
 }
 
 .quick-add-form {
@@ -1146,6 +1283,11 @@ h2 {
 }
 
 @media (min-width: 720px) {
+  .auth-shell {
+    grid-template-columns: 1fr 390px;
+    align-items: center;
+  }
+
   .app-shell {
     padding: 28px;
   }

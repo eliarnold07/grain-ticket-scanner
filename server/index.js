@@ -3,23 +3,34 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import OpenAI from 'openai';
-import { google } from 'googleapis';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { addTicketLog, deleteTicketLog, deleteTicketLogByInventoryTransactionId, getTicketLogSnapshot, listTicketLogs, updateTicketLog } from './ticketLogStore.js';
 import {
+  addTicketLog,
   createBin,
+  createContract,
+  createDriver,
   createInventoryTransaction,
   createTicketSaleTransaction,
   deleteBin,
+  deleteContract,
+  deleteDriver,
   deleteInventoryTransaction,
+  deleteTicketLog,
+  deleteTicketLogByInventoryTransactionId,
   getInventorySnapshot,
+  getTicketLogSnapshot,
   listBins,
+  listContracts,
+  listDrivers,
   listInventoryTransactions,
+  listTicketLogs,
+  requireSupabaseAuth,
+  resumeSupabaseAuth,
+  currentFarm,
+  updateContract,
+  updateTicketLog,
   updateBin
-} from './inventoryStore.js';
-import { createDriver, deleteDriver, listDrivers } from './driverStore.js';
-import { createContract, deleteContract, listContracts, updateContract } from './contractStore.js';
+} from './supabaseStore.js';
 
 const app = express();
 const upload = multer({
@@ -30,15 +41,7 @@ const upload = multer({
 });
 
 const port = process.env.PORT || 3001;
-const sheetId = process.env.GOOGLE_SHEET_ID;
-const sheetTab = process.env.GOOGLE_SHEET_TAB || 'Form Responses 1';
-const serviceAccountKeyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
-const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-const googleClientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 const allowedOrigin = process.env.CORS_ORIGIN || '*';
-const dropdownCacheMs = Number(process.env.DROPDOWN_CACHE_MS || 60000);
-const ticketStorageMode = process.env.TICKET_STORAGE_MODE || 'sheets';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -60,34 +63,15 @@ const ticketFields = [
   'notes'
 ];
 
-const dropdownTabs = {
-  bins: 'Bins',
-  haulers: 'Haulers',
-  destinations: 'Destinations'
-};
-
 const defaultDropdownValues = {
   destinations: [],
   haulers: [],
   bins: ['Field']
 };
 
-const duplicateTicketNumbers = new Set();
-let dropdownCache = {
-  expiresAt: 0,
-  data: null
-};
-
 app.use(cors({ origin: allowedOrigin }));
 app.use(express.json({ limit: '2mb' }));
-
-function isLocalTicketStorage() {
-  return ticketStorageMode.toLowerCase() === 'local';
-}
-
-function isSheetsTicketStorage() {
-  return ticketStorageMode.toLowerCase() === 'sheets';
-}
+app.use('/api', requireSupabaseAuth);
 
 function blankTicket() {
   return Object.fromEntries(ticketFields.map((field) => [field, '']));
@@ -182,11 +166,6 @@ function duplicateKey(ticketNumber) {
   return cleanSpaces(ticketNumber).toLowerCase();
 }
 
-function sheetText(value) {
-  const text = cleanSpaces(value);
-  return text ? `'${text}` : '';
-}
-
 function numberValue(value) {
   const number = Number(String(value || '').replace(/,/g, ''));
   return Number.isFinite(number) ? number : 0;
@@ -240,7 +219,7 @@ function logError(label, error) {
 function scanUpload(req, res, next) {
   upload.single('ticketImage')(req, res, (error) => {
     if (!error) {
-      next();
+      resumeSupabaseAuth(req, next);
       return;
     }
 
@@ -252,61 +231,6 @@ function scanUpload(req, res, next) {
         : error.message
     });
   });
-}
-
-function googleCredentialSource() {
-  if (googleClientEmail && googlePrivateKey) {
-    return 'environment variables';
-  }
-
-  if (serviceAccountJson) {
-    return 'GOOGLE_SERVICE_ACCOUNT_JSON';
-  }
-
-  if (serviceAccountKeyFile && existsSync(serviceAccountKeyFile)) {
-    return 'local JSON file';
-  }
-
-  return 'missing';
-}
-
-function getGoogleAuth() {
-  if (googleClientEmail && googlePrivateKey) {
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-
-    return new google.auth.GoogleAuth({
-      credentials: {
-        client_email: googleClientEmail,
-        private_key: privateKey
-      },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-  }
-
-  if (serviceAccountJson) {
-    const credentials = JSON.parse(serviceAccountJson);
-    return new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-  }
-
-  if (serviceAccountKeyFile && existsSync(serviceAccountKeyFile)) {
-    return new google.auth.GoogleAuth({
-      keyFile: serviceAccountKeyFile,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-  }
-
-  throw new Error('Missing Google credentials. Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY in production, or GOOGLE_SERVICE_ACCOUNT_KEY_FILE locally.');
-}
-
-function getSheetsClient() {
-  if (!sheetId) {
-    throw new Error('Missing GOOGLE_SHEET_ID in environment.');
-  }
-
-  return google.sheets({ version: 'v4', auth: getGoogleAuth() });
 }
 
 function uniqueValues(rows) {
@@ -328,154 +252,27 @@ function uniqueValues(rows) {
   });
 }
 
-async function readDropdownTab(sheets, tabName) {
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId,
-      range: `'${tabName}'!A2:A`
-    });
-
-    return {
-      values: uniqueValues(response.data.values || []),
-      missing: false
-    };
-  } catch (error) {
-    if (error.code === 400 || error.code === 404) {
-      return {
-        values: [],
-        missing: true
-      };
-    }
-
-    throw error;
-  }
-}
-
 async function getDropdownData() {
-  if (dropdownCache.data && Date.now() < dropdownCache.expiresAt) {
-    return dropdownCache.data;
-  }
-
   const appBins = (await listBins()).map((bin) => bin.bin_name);
   const appDrivers = (await listDrivers()).map((driver) => driver.name);
 
-  if (isLocalTicketStorage()) {
-    const payload = {
-      bins: uniqueValues([...appBins, ...defaultDropdownValues.bins]),
-      haulers: uniqueValues(appDrivers),
-      destinations: defaultDropdownValues.destinations,
-      missing_tabs: [],
-      source: 'local app data'
-    };
-
-    dropdownCache = {
-      expiresAt: Date.now() + dropdownCacheMs,
-      data: payload
-    };
-
-    return payload;
-  }
-
-  let sheets = null;
-  try {
-    sheets = getSheetsClient();
-  } catch (error) {
-    if (!isLocalTicketStorage()) {
-      throw error;
-    }
-
-    const payload = {
-      bins: uniqueValues(appBins),
-      haulers: uniqueValues(appDrivers),
-      destinations: defaultDropdownValues.destinations,
-      missing_tabs: [],
-      source: 'local defaults'
-    };
-
-    dropdownCache = {
-      expiresAt: Date.now() + dropdownCacheMs,
-      data: payload
-    };
-
-    return payload;
-  }
-
-  const entries = await Promise.all(
-    Object.entries(dropdownTabs).map(async ([key, tabName]) => {
-      const result = await readDropdownTab(sheets, tabName);
-      return [key, result];
-    })
-  );
-
-  const missingTabs = [];
-  const data = Object.fromEntries(
-    entries.map(([key, result]) => {
-      if (result.missing) {
-        missingTabs.push(dropdownTabs[key]);
-      }
-
-      if (key === 'bins') {
-        return [key, uniqueValues([...appBins, ...defaultDropdownValues.bins, ...result.values])];
-      }
-
-      if (key === 'haulers') {
-        return [key, uniqueValues([...appDrivers, ...result.values])];
-      }
-
-      return [key, uniqueValues([...(defaultDropdownValues[key] || []), ...result.values])];
-    })
-  );
-
   const payload = {
-    ...data,
-    missing_tabs: missingTabs
-  };
-
-  dropdownCache = {
-    expiresAt: Date.now() + dropdownCacheMs,
-    data: payload
+    bins: uniqueValues([...appBins, ...defaultDropdownValues.bins]),
+    haulers: uniqueValues(appDrivers),
+    destinations: [],
+    missing_tabs: [],
+    source: 'Supabase farm data'
   };
 
   return payload;
 }
 
-async function appendTicketToSheet(ticket) {
-  const sheets = getSheetsClient();
-  const row = [
-    new Date().toLocaleString('en-US', { timeZone: 'America/Indianapolis' }),
-    '',
-    ticket.date,
-    ticket.crop,
-    sheetText(ticket.ticket_number),
-    ticket.bushels,
-    ticket.delivered_to,
-    ticket.hauled_by,
-    ticket.moisture,
-    ticket.hauled_from
-  ];
-
-  const existingRows = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `'${sheetTab}'!A:J`
-  });
-  const values = existingRows.data.values || [];
-  const lastTicketRowIndex = values.reduce((lastIndex, sheetRow, index) => {
-    return sheetRow.some((cell) => cleanSpaces(cell)) ? index : lastIndex;
-  }, 0);
-  const nextRowNumber = lastTicketRowIndex + 2;
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `'${sheetTab}'!A${nextRowNumber}:J${nextRowNumber}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [row]
-    }
-  });
-}
-
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get('/api/session', (_req, res) => {
+  res.json({ farm: currentFarm() });
 });
 
 app.get('/api/dropdowns', async (_req, res) => {
@@ -485,7 +282,7 @@ app.get('/api/dropdowns', async (_req, res) => {
   } catch (error) {
     logError('Dropdown fetch failed', error);
     res.status(500).json({
-      error: 'Could not load dropdown values from Google Sheets.',
+      error: 'Could not load farm dropdown values.',
       detail: error.message
     });
   }
@@ -716,7 +513,6 @@ app.get('/api/drivers', async (_req, res) => {
 app.post('/api/drivers', async (req, res) => {
   try {
     const driver = await createDriver(req.body || {});
-    dropdownCache = { expiresAt: 0, data: null };
     res.status(201).json({ driver });
   } catch (error) {
     logError('Driver create failed', error);
@@ -730,7 +526,6 @@ app.post('/api/drivers', async (req, res) => {
 app.delete('/api/drivers/:id', async (req, res) => {
   try {
     await deleteDriver(req.params.id);
-    dropdownCache = { expiresAt: 0, data: null };
     res.json({ ok: true });
   } catch (error) {
     logError('Driver delete failed', error);
@@ -744,7 +539,6 @@ app.delete('/api/drivers/:id', async (req, res) => {
 app.post('/api/bins', async (req, res) => {
   try {
     const bin = await createBin(req.body || {});
-    dropdownCache = { expiresAt: 0, data: null };
     res.status(201).json({ bin });
   } catch (error) {
     logError('Bin create failed', error);
@@ -758,7 +552,6 @@ app.post('/api/bins', async (req, res) => {
 app.put('/api/bins/:id', async (req, res) => {
   try {
     const bin = await updateBin(req.params.id, req.body || {});
-    dropdownCache = { expiresAt: 0, data: null };
     res.json({ bin });
   } catch (error) {
     logError('Bin update failed', error);
@@ -772,7 +565,6 @@ app.put('/api/bins/:id', async (req, res) => {
 app.delete('/api/bins/:id', async (req, res) => {
   try {
     await deleteBin(req.params.id);
-    dropdownCache = { expiresAt: 0, data: null };
     res.json({ ok: true });
   } catch (error) {
     logError('Bin delete failed', error);
@@ -814,8 +606,8 @@ app.post('/api/inventory-transactions', async (req, res) => {
 
 app.delete('/api/inventory-transactions/:id', async (req, res) => {
   try {
-    const result = await deleteInventoryTransaction(req.params.id);
     const deletedLog = await deleteTicketLogByInventoryTransactionId(req.params.id);
+    const result = await deleteInventoryTransaction(req.params.id);
 
     res.json({
       ...result,
@@ -921,8 +713,10 @@ app.post('/api/extract-ticket', scanUpload, async (req, res) => {
 
     const parsed = JSON.parse(response.choices[0].message.content);
     const ticket = normalizeTicketData(parsed);
-    const ticketKey = duplicateKey(ticket.ticket_number);
-    const isDuplicate = Boolean(ticketKey && duplicateTicketNumbers.has(ticketKey));
+    const matchingTickets = ticket.ticket_number
+      ? await listTicketLogs({ ticket_number: ticket.ticket_number })
+      : [];
+    const isDuplicate = matchingTickets.some((log) => duplicateKey(log.ticket_number) === duplicateKey(ticket.ticket_number));
 
     console.log('Ticket scan completed', {
       scanId,
@@ -953,7 +747,17 @@ app.post('/api/extract-ticket', scanUpload, async (req, res) => {
 });
 
 app.post('/api/submit-ticket', async (req, res) => {
-  const ticket = normalizeTicketData(req.body?.ticket);
+  const submittedTicket = req.body?.ticket || {};
+  const ticket = {
+    ...normalizeTicketData(submittedTicket),
+    assignment_status: cleanSpaces(submittedTicket.assignment_status || 'Spot'),
+    assignments: Array.isArray(submittedTicket.assignments) ? submittedTicket.assignments : [],
+    payment_status: 'Not paid',
+    payment_date: '',
+    amount_received: 0,
+    payment_reference: '',
+    payment_notes: ''
+  };
   const validation = validateTicket(ticket);
 
   if (!validation.ok) {
@@ -962,49 +766,27 @@ app.post('/api/submit-ticket', async (req, res) => {
     });
   }
 
-  const ticketKey = duplicateKey(ticket.ticket_number);
-
   try {
-    let ticketLog = null;
+    await validateTicketAccounting(ticket);
+    let inventoryTransactionId = '';
 
-    if (isSheetsTicketStorage()) {
-      await appendTicketToSheet(ticket);
-
-      try {
-        ticketLog = await addTicketLog(ticket);
-      } catch (logErrorDetails) {
-        logError('Ticket log save failed after Google Sheets submit', logErrorDetails);
-      }
-    } else if (isLocalTicketStorage()) {
-      let inventoryTransactionId = '';
-
-      if (ticket.hauled_from.toLowerCase() !== 'field') {
-        const inventoryResult = await createTicketSaleTransaction({
-          binName: ticket.hauled_from,
-          bushels: ticket.bushels,
-          cropType: ticket.crop,
-          ticketId: ticket.ticket_number,
-          notes: `Ticket sale ${ticket.ticket_number}`,
-          allowOverdraw: req.body?.allow_bin_overdraw === true
-        });
-
-        inventoryTransactionId = inventoryResult?.transaction?.id || '';
-      }
-
-      ticketLog = await addTicketLog({
-        ...ticket,
-        inventory_transaction_id: inventoryTransactionId
+    if (ticket.hauled_from.toLowerCase() !== 'field') {
+      const inventoryResult = await createTicketSaleTransaction({
+        binName: ticket.hauled_from,
+        bushels: ticket.bushels,
+        cropType: ticket.crop,
+        ticketId: ticket.ticket_number,
+        notes: `Ticket sale ${ticket.ticket_number}`,
+        allowOverdraw: req.body?.allow_bin_overdraw === true
       });
-    } else {
-      return res.status(500).json({
-        error: 'Invalid ticket storage mode.',
-        detail: 'Use TICKET_STORAGE_MODE=sheets or TICKET_STORAGE_MODE=local.'
-      });
+
+      inventoryTransactionId = inventoryResult?.transaction?.id || '';
     }
 
-    if (ticketKey) {
-      duplicateTicketNumbers.add(ticketKey);
-    }
+    const ticketLog = await addTicketLog({
+      ...ticket,
+      inventory_transaction_id: inventoryTransactionId
+    });
 
     console.log('Reviewed grain ticket submission saved', {
       ticket_number: ticket.ticket_number,
@@ -1014,8 +796,8 @@ app.post('/api/submit-ticket', async (req, res) => {
 
     res.json({
       ok: true,
-      message: isLocalTicketStorage() ? 'Ticket saved locally' : 'Ticket submitted successfully',
-      storage_mode: ticketStorageMode,
+      message: 'Ticket submitted successfully',
+      storage_mode: 'supabase',
       ticket,
       ticket_log: ticketLog
     });
@@ -1023,9 +805,7 @@ app.post('/api/submit-ticket', async (req, res) => {
     logError('Ticket submit failed', error);
     const isOverdraw = error.code === 'BIN_INVENTORY_OVERDRAW';
     res.status(isOverdraw ? 409 : 500).json({
-      error: isLocalTicketStorage()
-        ? 'Could not save ticket data locally.'
-        : 'Could not save ticket data to Google Sheets.',
+      error: 'Could not save ticket data.',
       detail: error.message,
       code: error.code,
       bin_name: error.binName,
@@ -1037,6 +817,5 @@ app.post('/api/submit-ticket', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Grain Ticket Scanner API running on port ${port}`);
-  console.log(`Ticket storage mode: ${ticketStorageMode}`);
-  console.log(`Google Sheets credentials source: ${googleCredentialSource()}`);
+  console.log('Ticket storage mode: Supabase');
 });

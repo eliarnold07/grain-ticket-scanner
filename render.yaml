@@ -10,7 +10,11 @@ services:
         value: 20
       - key: PORT
         value: 3001
-      - key: GOOGLE_SHEET_TAB
-        value: Form Responses 1
-      - key: DROPDOWN_CACHE_MS
-        value: 60000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
