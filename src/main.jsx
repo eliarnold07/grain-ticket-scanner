@@ -720,6 +720,34 @@ function App() {
     }
   }
 
+  async function repairEmployee() {
+    if (!employeeForm.email.trim() || !employeeForm.display_name.trim()) {
+      setUserStatus('Enter the existing employee name and email first.');
+      return;
+    }
+
+    setIsCreatingEmployee(true);
+    setUserStatus('Repairing employee farm access...');
+    try {
+      const response = await apiFetch('/api/users/repair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          display_name: employeeForm.display_name,
+          email: employeeForm.email
+        })
+      });
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      setEmployeeForm(blankEmployeeForm);
+      await loadFarmUsers({ silent: true });
+      setUserStatus('Employee login repaired and attached to this farm.');
+    } catch (error) {
+      setUserStatus(cleanMessage(error));
+    } finally {
+      setIsCreatingEmployee(false);
+    }
+  }
+
   function startEditingTicket(log) {
     setEditingTicket(ticketEditForm(log));
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2315,6 +2343,12 @@ function App() {
               <button className="primary-button" type="submit" disabled={isCreatingEmployee}>
                 {isCreatingEmployee ? 'Creating Employee...' : 'Create Employee Login'}
               </button>
+              <button className="secondary-button" type="button" onClick={repairEmployee} disabled={isCreatingEmployee}>
+                Repair Existing Employee Login
+              </button>
+              <small className="field-help">
+                Use repair if an employee login accidentally opened as its own farm administrator.
+              </small>
             </form>
 
             <div className="farm-user-list">
