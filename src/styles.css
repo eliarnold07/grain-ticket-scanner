@@ -170,6 +170,13 @@ h2 {
   white-space: nowrap;
 }
 
+.account-tools .account-role {
+  color: #265d3a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .account-tools button {
   min-height: 40px;
   border-radius: 7px;
@@ -185,6 +192,7 @@ h2 {
 .history-panel,
 .inventory-panel,
 .contracts-panel,
+.users-panel,
 .success-panel {
   background: #ffffff;
   border: 1px solid #ded8c9;
@@ -597,6 +605,83 @@ h2 {
 
 .contracts-panel {
   margin-top: 16px;
+}
+
+.users-panel {
+  margin-top: 16px;
+}
+
+.user-management-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.employee-form,
+.farm-user-list {
+  border: 1px solid #d8d2c2;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcf9;
+}
+
+.employee-form {
+  display: grid;
+  gap: 12px;
+}
+
+.farm-user-list {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+
+.farm-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e4e0d5;
+  padding: 10px 2px;
+}
+
+.farm-user-row:last-child {
+  border-bottom: 0;
+}
+
+.farm-user-row div {
+  display: grid;
+  min-width: 0;
+}
+
+.farm-user-row span {
+  overflow: hidden;
+  color: #647065;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+}
+
+.farm-user-row .role-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #e8eee8;
+  color: #265d3a;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.farm-user-row .role-badge.employee {
+  background: #edf1f5;
+  color: #3d5264;
+}
+
+.employee-shell {
+  max-width: 920px;
+}
+
+.employee-shell .capture-panel {
+  margin-top: 4px;
 }
 
 .form-heading p {
@@ -1297,7 +1382,7 @@ h2 {
   }
 
   .view-tabs {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .dashboard-hero {
@@ -1329,6 +1414,7 @@ h2 {
     .history-panel,
     .inventory-panel,
     .contracts-panel,
+    .users-panel,
     .success-panel {
     padding: 20px;
   }
@@ -1361,5 +1447,9 @@ h2 {
 
   .ticket-log-details.compact-details {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .user-management-grid {
+    grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1.2fr);
   }
 }
