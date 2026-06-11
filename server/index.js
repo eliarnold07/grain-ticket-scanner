@@ -9,6 +9,7 @@ import {
   createBin,
   createContract,
   createDriver,
+  createEmployeeAccount,
   createInventoryTransaction,
   createTicketSaleTransaction,
   deleteBin,
@@ -22,10 +23,12 @@ import {
   listBins,
   listContracts,
   listDrivers,
+  listFarmUsers,
   listInventoryTransactions,
   listTicketLogs,
   requireSupabaseAuth,
   resumeSupabaseAuth,
+  currentAccount,
   currentFarm,
   updateContract,
   updateTicketLog,
@@ -72,6 +75,26 @@ const defaultDropdownValues = {
 app.use(cors({ origin: allowedOrigin }));
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', requireSupabaseAuth);
+
+const employeeRoutes = new Set([
+  'GET /session',
+  'GET /dropdowns',
+  'GET /scanner-contracts',
+  'POST /extract-ticket',
+  'POST /submit-ticket'
+]);
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next();
+
+  const account = currentAccount();
+  if (account?.role === 'admin') return next();
+
+  const routeKey = `${req.method} ${req.path}`;
+  if (account?.role === 'employee' && employeeRoutes.has(routeKey)) return next();
+
+  return res.status(403).json({ error: 'Admin access is required for this action.' });
+});
 
 function blankTicket() {
   return Object.fromEntries(ticketFields.map((field) => [field, '']));
@@ -272,7 +295,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.get('/api/session', (_req, res) => {
-  res.json({ farm: currentFarm() });
+  res.json({ farm: currentFarm(), account: currentAccount() });
 });
 
 app.get('/api/dropdowns', async (_req, res) => {
@@ -391,6 +414,7 @@ app.get('/api/ticket-logs', async (req, res) => {
       crop: req.query.crop,
       ticket_number: req.query.ticket_number,
       elevator: req.query.elevator,
+      scanned_by: req.query.scanned_by,
       assignment_status: req.query.assignment_status,
       payment_status: req.query.payment_status
     });
@@ -450,6 +474,46 @@ app.get('/api/contracts', async (_req, res) => {
   } catch (error) {
     logError('Contract fetch failed', error);
     res.status(500).json({ error: 'Could not load contracts.', detail: error.message });
+  }
+});
+
+app.get('/api/scanner-contracts', async (_req, res) => {
+  try {
+    const ticketLogs = await getTicketLogSnapshot();
+    const contracts = await listContracts(ticketLogs);
+    const availableContracts = contracts
+      .filter((contract) => Number(contract.remaining_bushels || 0) > 0 && String(contract.status).toLowerCase() !== 'closed')
+      .map((contract) => ({
+        id: contract.id,
+        contract_id: contract.contract_id,
+        buyer: contract.buyer,
+        commodity: contract.commodity,
+        remaining_bushels: contract.remaining_bushels,
+        status: contract.status
+      }));
+
+    res.json({ contracts: availableContracts });
+  } catch (error) {
+    logError('Scanner contract fetch failed', error);
+    res.status(500).json({ error: 'Could not load available contracts.', detail: error.message });
+  }
+});
+
+app.get('/api/users', async (_req, res) => {
+  try {
+    res.json({ users: await listFarmUsers() });
+  } catch (error) {
+    logError('Farm user fetch failed', error);
+    res.status(500).json({ error: 'Could not load farm users.', detail: error.message });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    res.status(201).json({ user: await createEmployeeAccount(req.body || {}) });
+  } catch (error) {
+    logError('Employee account creation failed', error);
+    res.status(400).json({ error: 'Could not create employee account.', detail: error.message });
   }
 });
 
@@ -818,4 +882,5 @@ app.post('/api/submit-ticket', async (req, res) => {
 app.listen(port, () => {
   console.log(`Grain Ticket Scanner API running on port ${port}`);
   console.log('Ticket storage mode: Supabase');
+  console.log(`Supabase privileged server access: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'missing (employee account features unavailable)'}`);
 });
