@@ -136,6 +136,82 @@ export async function listFarmUsers() {
   return db(`farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&farm_id=eq.${farmId}&order=created_at.asc`);
 }
 
+async function attachEmployeeToFarm(user, { farmId, displayName, email }) {
+  const memberships = await db(
+    `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${user.id}&limit=1`
+  );
+  const existingMembership = memberships[0];
+  const orphanFarmId = existingMembership?.farm_id && existingMembership.farm_id !== farmId
+    ? existingMembership.farm_id
+    : null;
+
+  await rawRequest(`/auth/v1/admin/users/${user.id}`, {
+    method: 'PUT',
+    serviceRole: true,
+    body: {
+      app_metadata: {
+        ...(user.app_metadata || {}),
+        farm_id: farmId,
+        farm_role: 'employee'
+      },
+      user_metadata: {
+        ...(user.user_metadata || {}),
+        display_name: displayName
+      }
+    }
+  });
+
+  if (existingMembership) {
+    await db(`farm_accounts?user_id=eq.${user.id}`, { method: 'DELETE' });
+  }
+
+  const rows = await db('farm_accounts', {
+    method: 'POST',
+    prefer: 'return=representation',
+    body: {
+      user_id: user.id,
+      farm_id: farmId,
+      role: 'employee',
+      display_name: displayName,
+      email,
+      updated_at: new Date().toISOString()
+    }
+  });
+  const attached = rows[0];
+
+  if (!attached || attached.farm_id !== farmId || attached.role !== 'employee') {
+    throw new Error('Employee login was created, but its farm membership could not be verified.');
+  }
+
+  if (orphanFarmId) {
+    const remainingMembers = await db(
+      `farm_accounts?select=user_id&farm_id=eq.${orphanFarmId}&limit=1`
+    );
+
+    if (remainingMembers.length === 0) {
+      await db(`farms?id=eq.${orphanFarmId}`, { method: 'DELETE' });
+    }
+  }
+
+  return attached;
+}
+
+async function findAuthUserByEmail(email) {
+  const data = await rawRequest('/auth/v1/admin/users?page=1&per_page=1000', {
+    serviceRole: true
+  });
+
+  return (data?.users || []).find((user) => clean(user.email).toLowerCase() === email);
+}
+
+async function farmHasOperationalData(farmId) {
+  const tables = ['tickets', 'bins', 'contracts', 'payments', 'inventory_transactions'];
+  const results = await Promise.all(
+    tables.map((table) => db(`${table}?select=id&farm_id=eq.${farmId}&limit=1`))
+  );
+  return results.some((rows) => rows.length > 0);
+}
+
 export async function createEmployeeAccount(input) {
   const { farmId, role } = context();
   if (role !== 'admin') throw new Error('Only farm admins can create employee accounts.');
@@ -166,15 +242,47 @@ export async function createEmployeeAccount(input) {
     }
   });
 
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${created.id}&limit=1`
-  );
+  return attachEmployeeToFarm(created, {
+    farmId,
+    displayName,
+    email
+  });
+}
 
-  if (!memberships[0]) {
-    throw new Error('Employee login was created, but the farm membership was not attached.');
+export async function repairEmployeeAccount(input) {
+  const { farmId, role } = context();
+  if (role !== 'admin') throw new Error('Only farm admins can repair employee accounts.');
+  if (!supabaseServiceRoleKey) throw new Error('Employee repair requires SUPABASE_SERVICE_ROLE_KEY.');
+
+  const email = clean(input.email).toLowerCase();
+  const displayName = clean(input.display_name);
+  if (!email) throw new Error('Employee email is required.');
+  if (!displayName) throw new Error('Employee name is required.');
+
+  const user = await findAuthUserByEmail(email);
+  if (!user) throw new Error('No existing login was found for that email.');
+
+  const memberships = await db(
+    `farm_accounts?select=user_id,farm_id,role&user_id=eq.${user.id}&limit=1`
+  );
+  const membership = memberships[0];
+
+  if (membership?.farm_id && membership.farm_id !== farmId) {
+    const otherMembers = await db(
+      `farm_accounts?select=user_id&farm_id=eq.${membership.farm_id}&user_id=neq.${user.id}&limit=1`
+    );
+    const hasData = await farmHasOperationalData(membership.farm_id);
+
+    if (otherMembers.length > 0 || hasData) {
+      throw new Error('That login belongs to an active farm and cannot be reassigned.');
+    }
   }
 
-  return memberships[0];
+  return attachEmployeeToFarm(user, {
+    farmId,
+    displayName,
+    email
+  });
 }
 
 function publicBin(bin, transactions = []) {
