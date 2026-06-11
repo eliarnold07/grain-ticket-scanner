@@ -26,6 +26,7 @@ import {
   listFarmUsers,
   listInventoryTransactions,
   listTicketLogs,
+  repairEmployeeAccount,
   requireSupabaseAuth,
   resumeSupabaseAuth,
   currentAccount,
@@ -514,6 +515,15 @@ app.post('/api/users', async (req, res) => {
   } catch (error) {
     logError('Employee account creation failed', error);
     res.status(400).json({ error: 'Could not create employee account.', detail: error.message });
+  }
+});
+
+app.post('/api/users/repair', async (req, res) => {
+  try {
+    res.json({ user: await repairEmployeeAccount(req.body || {}) });
+  } catch (error) {
+    logError('Employee account repair failed', error);
+    res.status(400).json({ error: 'Could not repair employee account.', detail: error.message });
   }
 });
 
