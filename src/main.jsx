@@ -47,6 +47,11 @@ const blankContractForm = {
   status: 'Open',
   notes: ''
 };
+const blankEmployeeForm = {
+  display_name: '',
+  email: '',
+  password: ''
+};
 
 function ticketEditForm(log = {}) {
   return {
@@ -224,6 +229,7 @@ function App() {
   const refreshPromiseRef = useRef(null);
   const terminalAuthFailureRef = useRef(false);
   const [farm, setFarm] = useState(null);
+  const [account, setAccount] = useState(null);
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ farmName: '', email: '', password: '' });
   const [authStatus, setAuthStatus] = useState('');
@@ -262,6 +268,11 @@ function App() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [ticketLogs, setTicketLogs] = useState([]);
   const [contracts, setContracts] = useState([]);
+  const [farmUsers, setFarmUsers] = useState([]);
+  const [employeeForm, setEmployeeForm] = useState(blankEmployeeForm);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
+  const [userStatus, setUserStatus] = useState('');
   const [contractForm, setContractForm] = useState(blankContractForm);
   const [editingContractId, setEditingContractId] = useState('');
   const [editingTicket, setEditingTicket] = useState(null);
@@ -280,6 +291,7 @@ function App() {
     crop: '',
     ticket_number: '',
     elevator: '',
+    scanned_by: '',
     assignment_status: '',
     payment_status: ''
   });
@@ -311,6 +323,8 @@ function App() {
   const [dashboard, setDashboard] = useState(emptyDashboard);
 
   const isAuthenticated = Boolean(session?.access_token);
+  const isAdmin = account?.role === 'admin';
+  const isEmployee = account?.role === 'employee';
 
   useEffect(() => {
     let cancelled = false;
@@ -355,19 +369,40 @@ function App() {
       return;
     }
 
-    loadFarmSession();
-    loadDropdowns();
-    loadDashboard({ silent: true });
-    loadTicketHistory({ silent: true });
-    loadBins({ silent: true });
-    loadDrivers({ silent: true });
-    loadContracts({ silent: true });
+    let cancelled = false;
+
+    async function initializeFarmData() {
+      const sessionData = await loadFarmSession();
+      if (!sessionData || cancelled) return;
+
+      if (sessionData.account?.role === 'employee') {
+        setActiveView('scanner');
+        await Promise.all([
+          loadDropdowns({ silent: true }),
+          loadScannerContracts({ silent: true })
+        ]);
+        return;
+      }
+
+      await Promise.all([
+        loadDropdowns({ silent: true }),
+        loadDashboard({ silent: true }),
+        loadTicketHistory({ silent: true }),
+        loadBins({ silent: true }),
+        loadDrivers({ silent: true }),
+        loadContracts({ silent: true }),
+        loadFarmUsers({ silent: true })
+      ]);
+    }
+
+    initializeFarmData();
     const intervalId = window.setInterval(() => loadDropdowns({ silent: true }), 60000);
     const handleFocus = () => loadDropdowns({ silent: true });
 
     window.addEventListener('focus', handleFocus);
 
     return () => {
+      cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
     };
@@ -432,6 +467,7 @@ function App() {
     storeSession(null);
     setSession(null);
     setFarm(null);
+    setAccount(null);
     setAuthStatus('Your session expired. Please log in again.');
   }
 
@@ -441,8 +477,11 @@ function App() {
       if (!response.ok) throw new Error(await readErrorResponse(response));
       const data = await response.json();
       setFarm(data.farm);
+      setAccount(data.account);
+      return data;
     } catch (error) {
       setStatus(cleanMessage(error));
+      return null;
     }
   }
 
@@ -485,6 +524,9 @@ function App() {
     await signOutFarm(activeSession?.access_token);
     setSession(null);
     setFarm(null);
+    setAccount(null);
+    setFarmUsers([]);
+    setUserStatus('');
     setTicketLogs([]);
     setBins([]);
     setContracts([]);
@@ -496,13 +538,19 @@ function App() {
   }
 
   useEffect(() => {
-    if (isAuthReady && isAuthenticated && activeView === 'dashboard') {
-      loadDashboard({ silent: true });
+    if (isEmployee && activeView !== 'scanner') {
+      setActiveView('scanner');
     }
-  }, [activeView, isAuthReady, isAuthenticated]);
+  }, [activeView, isEmployee]);
 
   useEffect(() => {
-    if (!isAuthReady || !isAuthenticated || activeView !== 'history') {
+    if (isAuthReady && isAuthenticated && isAdmin && activeView === 'dashboard') {
+      loadDashboard({ silent: true });
+    }
+  }, [activeView, isAdmin, isAuthReady, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthReady || !isAuthenticated || !isAdmin || activeView !== 'history') {
       return;
     }
 
@@ -511,7 +559,7 @@ function App() {
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeView, historyFilters, isAuthReady, isAuthenticated]);
+  }, [activeView, historyFilters, isAdmin, isAuthReady, isAuthenticated]);
 
   async function loadDropdowns(options = {}) {
     if (!options.silent) {
@@ -616,6 +664,59 @@ function App() {
       setContracts(data.contracts || []);
     } catch (error) {
       if (!options.silent) setStatus(cleanMessage(error));
+    }
+  }
+
+  async function loadScannerContracts(options = {}) {
+    try {
+      const response = await apiFetch('/api/scanner-contracts');
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await response.json();
+      setContracts(data.contracts || []);
+    } catch (error) {
+      if (!options.silent) setStatus(cleanMessage(error));
+    }
+  }
+
+  async function loadFarmUsers(options = {}) {
+    if (!options.silent) setIsLoadingUsers(true);
+
+    try {
+      const response = await apiFetch('/api/users');
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await response.json();
+      setFarmUsers(data.users || []);
+    } catch (error) {
+      if (!options.silent) setUserStatus(cleanMessage(error));
+    } finally {
+      if (!options.silent) setIsLoadingUsers(false);
+    }
+  }
+
+  function updateEmployeeForm(field, value) {
+    setEmployeeForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createEmployee(event) {
+    event.preventDefault();
+    if (isCreatingEmployee) return;
+
+    setIsCreatingEmployee(true);
+    setUserStatus('Creating employee login...');
+    try {
+      const response = await apiFetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(employeeForm)
+      });
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      setEmployeeForm(blankEmployeeForm);
+      await loadFarmUsers({ silent: true });
+      setUserStatus('Employee account created. They can now log in with that email and password.');
+    } catch (error) {
+      setUserStatus(cleanMessage(error));
+    } finally {
+      setIsCreatingEmployee(false);
     }
   }
 
@@ -767,6 +868,7 @@ function App() {
       ['Delivered To', 'delivered_to'], ['Gross Weight', 'gross_weight'], ['Tare Weight', 'tare_weight'],
       ['Net Weight', 'net_weight'], ['Bushels', 'bushels'], ['Moisture', 'moisture'], ['Price', 'price'],
       ['Revenue', 'revenue'], ['Hauled By', 'hauled_by'], ['Notes', 'notes'], ['Assignment Status', 'assignment_status'],
+      ['Scanned By', 'scanned_by_name'],
       ['Payment Status', 'payment_status'], ['Payment Date', 'payment_date'], ['Amount Received', 'amount_received'],
       ['Payment Reference', 'payment_reference'], ['Payment Notes', 'payment_notes']
     ];
@@ -1050,6 +1152,7 @@ function App() {
       crop: '',
       ticket_number: '',
       elevator: '',
+      scanned_by: '',
       assignment_status: '',
       payment_status: ''
     });
@@ -1301,11 +1404,15 @@ function App() {
       setDuplicate(null);
       setIsSuccess(true);
       setStatus(data.message || 'Ticket submitted successfully');
-      loadTicketHistory({ silent: true });
-      loadContracts({ silent: true });
-      loadBins({ silent: true });
       loadDropdowns({ silent: true });
-      loadDashboard({ silent: true });
+      if (isAdmin) {
+        loadTicketHistory({ silent: true });
+        loadContracts({ silent: true });
+        loadBins({ silent: true });
+        loadDashboard({ silent: true });
+      } else {
+        loadScannerContracts({ silent: true });
+      }
     } catch (error) {
       setStatus(cleanMessage(error));
     } finally {
@@ -1375,7 +1482,7 @@ function App() {
           </div>
           <div className="form-heading">
             <h2>{authMode === 'signup' ? 'Start a farm account' : 'Welcome back'}</h2>
-            <p>{authMode === 'signup' ? 'One shared login for your farm during private beta.' : 'Use your farm’s shared account.'}</p>
+            <p>{authMode === 'signup' ? 'Create the administrator account for your farm.' : 'Use your farm account to continue.'}</p>
           </div>
           {authMode === 'signup' && (
             <label className="field">
@@ -1400,8 +1507,19 @@ function App() {
     );
   }
 
+  if (!account) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card auth-loading">
+          <p className="eyebrow">BinFlow</p>
+          <h2>Loading your farm workspace...</h2>
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${isEmployee ? 'employee-shell' : ''}`}>
       <section className="header-band">
         <div>
           <p className="eyebrow">Grain operations platform</p>
@@ -1410,13 +1528,14 @@ function App() {
         <div className="account-tools">
           <div>
             <strong>{farm?.name || 'Farm account'}</strong>
-            <span>{session.user?.email}</span>
+            <span>{account.display_name || session.user?.email}</span>
+            <small className="account-role">{isAdmin ? 'Administrator' : 'Employee scanner'}</small>
           </div>
           <button type="button" onClick={logout}>Log Out</button>
         </div>
       </section>
 
-      <nav className="view-tabs" aria-label="App views">
+      {isAdmin && <nav className="view-tabs" aria-label="App views">
         <button
           className={activeView === 'dashboard' ? 'active' : ''}
           type="button"
@@ -1464,9 +1583,19 @@ function App() {
         >
           Contracts
         </button>
-      </nav>
+        <button
+          className={activeView === 'users' ? 'active' : ''}
+          type="button"
+          onClick={() => {
+            setActiveView('users');
+            loadFarmUsers();
+          }}
+        >
+          Users
+        </button>
+      </nav>}
 
-      {activeView === 'dashboard' && (
+      {isAdmin && activeView === 'dashboard' && (
         <section className="dashboard-view">
           <div className="dashboard-hero">
             <div>
@@ -1660,7 +1789,7 @@ function App() {
         </section>
       )}
 
-      {activeView === 'history' && (
+      {isAdmin && activeView === 'history' && (
         <section className="history-panel">
           <div className="form-heading">
             <h2>Ticket History</h2>
@@ -1674,7 +1803,7 @@ function App() {
                 type="text"
                 value={historyFilters.search}
                 onChange={(event) => updateHistoryFilter('search', event.target.value)}
-                placeholder="Ticket, bin, hauler, notes"
+                placeholder="Ticket, bin, hauler, scanner, notes"
               />
             </label>
             <label className="field">
@@ -1710,6 +1839,15 @@ function App() {
                 value={historyFilters.elevator}
                 onChange={(event) => updateHistoryFilter('elevator', event.target.value)}
                 placeholder="Rock Port"
+              />
+            </label>
+            <label className="field">
+              <span>Scanned By</span>
+              <input
+                type="text"
+                value={historyFilters.scanned_by}
+                onChange={(event) => updateHistoryFilter('scanned_by', event.target.value)}
+                placeholder="Employee name"
               />
             </label>
             <label className="field">
@@ -1863,7 +2001,7 @@ function App() {
                       ['delivered_to', 'Delivered To'], ['gross_weight', 'Gross'], ['tare_weight', 'Tare'],
                       ['net_weight', 'Net'], ['bushels', 'Bushels'], ['moisture', 'Moisture'], ['price', 'Price'],
                       ['revenue', 'Revenue'], ['hauled_by', 'Hauled By'], ['notes', 'Notes'],
-                      ['assignment_status', 'Assignment'], ['payment_status', 'Payment']
+                      ['scanned_by_name', 'Scanned By'], ['assignment_status', 'Assignment'], ['payment_status', 'Payment']
                     ].map(([key, label]) => (
                       <th key={key}><button type="button" onClick={() => toggleHistorySort(key)}>{label}</button></th>
                     ))}
@@ -1887,6 +2025,7 @@ function App() {
                       <td>{formatCurrency(log.revenue)}</td>
                       <td>{displayValue(log.hauled_by)}</td>
                       <td className="notes-cell">{displayValue(log.notes)}</td>
+                      <td>{displayValue(log.scanned_by_name)}</td>
                       <td><span className={`status-tag ${(log.assignment_status || 'Unassigned').toLowerCase()}`}>{log.assignment_status || 'Unassigned'}</span></td>
                       <td><span className={`status-tag ${(log.payment_status || 'Not paid').toLowerCase().replaceAll(' ', '-')}`}>{log.payment_status || 'Not paid'}</span></td>
                       <td>
@@ -1904,7 +2043,7 @@ function App() {
         </section>
       )}
 
-      {activeView === 'contracts' && (
+      {isAdmin && activeView === 'contracts' && (
         <section className="contracts-panel">
           <div className="form-heading">
             <h2>Grain Contracts</h2>
@@ -1997,7 +2136,7 @@ function App() {
         </section>
       )}
 
-      {activeView === 'inventory' && (
+      {isAdmin && activeView === 'inventory' && (
         <section className="inventory-panel">
           <div className="form-heading">
             <h2>Grain Bins</h2>
@@ -2132,6 +2271,80 @@ function App() {
         </section>
       )}
 
+      {isAdmin && activeView === 'users' && (
+        <section className="users-panel">
+          <div className="form-heading">
+            <h2>Farm Users</h2>
+            <p>Create scanner-only employee logins and see who belongs to this farm.</p>
+          </div>
+          {userStatus && <div className="notice">{userStatus}</div>}
+
+          <div className="user-management-grid">
+            <form className="employee-form" onSubmit={createEmployee}>
+              <div className="form-heading compact-heading">
+                <h3>Add Employee</h3>
+                <p>The employee will only have access to ticket scanning.</p>
+              </div>
+              <label className="field">
+                <span>Employee Name</span>
+                <input
+                  value={employeeForm.display_name}
+                  onChange={(event) => updateEmployeeForm('display_name', event.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={employeeForm.email}
+                  onChange={(event) => updateEmployeeForm('email', event.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Temporary Password</span>
+                <input
+                  type="password"
+                  minLength={8}
+                  value={employeeForm.password}
+                  onChange={(event) => updateEmployeeForm('password', event.target.value)}
+                  required
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={isCreatingEmployee}>
+                {isCreatingEmployee ? 'Creating Employee...' : 'Create Employee Login'}
+              </button>
+            </form>
+
+            <div className="farm-user-list">
+              <div className="section-title-row">
+                <div>
+                  <h3>Current Users</h3>
+                  <p>{farmUsers.length} account{farmUsers.length === 1 ? '' : 's'} attached to {farm?.name || 'this farm'}.</p>
+                </div>
+                <button type="button" onClick={() => loadFarmUsers()} disabled={isLoadingUsers}>
+                  {isLoadingUsers ? 'Loading...' : 'Refresh'}
+                </button>
+              </div>
+              {farmUsers.length === 0 ? (
+                <div className="premium-empty">No farm users found.</div>
+              ) : (
+                farmUsers.map((user) => (
+                  <article className="farm-user-row" key={user.user_id}>
+                    <div>
+                      <strong>{user.display_name || user.email}</strong>
+                      <span>{user.email}</span>
+                    </div>
+                    <span className={`role-badge ${user.role}`}>{user.role}</span>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
       {activeView === 'scanner' && (
         <>
       {isSuccess && (
@@ -2183,7 +2396,7 @@ function App() {
         )}
       </section>
 
-      <section className="driver-panel">
+      {isAdmin && <section className="driver-panel">
         <div className="form-heading compact-heading">
           <h2>Drivers</h2>
           <p>Add driver names here for the Hauled By dropdown.</p>
@@ -2208,7 +2421,7 @@ function App() {
             ))}
           </div>
         )}
-      </section>
+      </section>}
 
       <form className="review-form" onSubmit={submitTicket}>
         <div className="form-heading">
