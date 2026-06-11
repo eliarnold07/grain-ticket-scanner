@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 const requestContext = new AsyncLocalStorage();
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 function clean(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -18,14 +19,20 @@ function configReady() {
   return Boolean(supabaseUrl && supabaseAnonKey);
 }
 
-async function rawRequest(path, { token, method = 'GET', body, prefer } = {}) {
+async function rawRequest(path, { token, method = 'GET', body, prefer, serviceRole = false } = {}) {
   if (!configReady()) throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY.');
+  if (serviceRole && !supabaseServiceRoleKey) {
+    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY.');
+  }
+
+  const apiKey = serviceRole ? supabaseServiceRoleKey : supabaseAnonKey;
+  const authorization = serviceRole ? supabaseServiceRoleKey : token || supabaseAnonKey;
 
   const response = await fetch(`${supabaseUrl}${path}`, {
     method,
     headers: {
-      apikey: supabaseAnonKey,
-      Authorization: `Bearer ${token || supabaseAnonKey}`,
+      apikey: apiKey,
+      Authorization: `Bearer ${authorization}`,
       'Content-Type': 'application/json',
       ...(prefer ? { Prefer: prefer } : {})
     },
@@ -46,18 +53,34 @@ async function rawRequest(path, { token, method = 'GET', body, prefer } = {}) {
 
 async function buildContext(accessToken) {
   const user = await rawRequest('/auth/v1/user', { token: accessToken });
-  const accounts = await rawRequest(`/rest/v1/farm_accounts?select=farm_id&user_id=eq.${user.id}&limit=1`, { token: accessToken });
+  const useServiceRole = Boolean(supabaseServiceRoleKey);
+  const accounts = await rawRequest(
+    `/rest/v1/farm_accounts?select=farm_id,role,display_name,email&user_id=eq.${user.id}&limit=1`,
+    { token: accessToken, serviceRole: useServiceRole }
+  );
 
   if (!accounts?.[0]?.farm_id) {
     throw new Error('No farm account is attached to this login.');
   }
 
-  const farms = await rawRequest(`/rest/v1/farms?select=id,name&id=eq.${accounts[0].farm_id}&limit=1`, { token: accessToken });
+  const membership = accounts[0];
+  const farms = await rawRequest(
+    `/rest/v1/farms?select=id,name&id=eq.${membership.farm_id}&limit=1`,
+    { token: accessToken, serviceRole: useServiceRole }
+  );
   return {
     token: accessToken,
     user,
-    farmId: accounts[0].farm_id,
-    farm: farms?.[0] || { id: accounts[0].farm_id, name: 'Farm' }
+    farmId: membership.farm_id,
+    role: membership.role || 'admin',
+    member: {
+      user_id: user.id,
+      farm_id: membership.farm_id,
+      role: membership.role || 'admin',
+      display_name: clean(membership.display_name) || clean(user.user_metadata?.display_name) || clean(user.email),
+      email: clean(membership.email) || clean(user.email)
+    },
+    farm: farms?.[0] || { id: membership.farm_id, name: 'Farm' }
   };
 }
 
@@ -89,6 +112,11 @@ export function currentFarm() {
   return context?.farm || null;
 }
 
+export function currentAccount() {
+  const value = requestContext.getStore();
+  return value?.member || null;
+}
+
 function context() {
   const value = requestContext.getStore();
   if (!value) throw new Error('Missing authenticated farm context.');
@@ -96,7 +124,57 @@ function context() {
 }
 
 async function db(path, options = {}) {
-  return rawRequest(`/rest/v1/${path}`, { ...options, token: context().token });
+  return rawRequest(`/rest/v1/${path}`, {
+    ...options,
+    token: context().token,
+    serviceRole: Boolean(supabaseServiceRoleKey)
+  });
+}
+
+export async function listFarmUsers() {
+  const { farmId } = context();
+  return db(`farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&farm_id=eq.${farmId}&order=created_at.asc`);
+}
+
+export async function createEmployeeAccount(input) {
+  const { farmId, role } = context();
+  if (role !== 'admin') throw new Error('Only farm admins can create employee accounts.');
+  if (!supabaseServiceRoleKey) throw new Error('Employee creation requires SUPABASE_SERVICE_ROLE_KEY.');
+
+  const email = clean(input.email).toLowerCase();
+  const password = String(input.password || '');
+  const displayName = clean(input.display_name);
+
+  if (!email) throw new Error('Employee email is required.');
+  if (!displayName) throw new Error('Employee name is required.');
+  if (password.length < 8) throw new Error('Employee password must be at least 8 characters.');
+
+  const created = await rawRequest('/auth/v1/admin/users', {
+    method: 'POST',
+    serviceRole: true,
+    body: {
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        display_name: displayName
+      },
+      app_metadata: {
+        farm_id: farmId,
+        farm_role: 'employee'
+      }
+    }
+  });
+
+  const memberships = await db(
+    `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${created.id}&limit=1`
+  );
+
+  if (!memberships[0]) {
+    throw new Error('Employee login was created, but the farm membership was not attached.');
+  }
+
+  return memberships[0];
 }
 
 function publicBin(bin, transactions = []) {
@@ -345,11 +423,17 @@ function normalizeTicket(ticket, existing = {}) {
 }
 
 export async function addTicketLog(ticket) {
-  const { farmId } = context();
+  const { farmId, user, member } = context();
   const rows = await db('tickets', {
     method: 'POST',
     prefer: 'return=representation',
-    body: { farm_id: farmId, ...normalizeTicket(ticket), created_at: new Date().toISOString() }
+    body: {
+      farm_id: farmId,
+      ...normalizeTicket(ticket),
+      scanned_by_user_id: user.id,
+      scanned_by_name: clean(member.display_name) || clean(member.email) || 'Farm user',
+      created_at: new Date().toISOString()
+    }
   });
   return rows[0];
 }
@@ -386,7 +470,19 @@ export async function updateTicketLog(id, input) {
 
 export async function getTicketLogSnapshot() {
   const { farmId } = context();
-  return db(`tickets?select=*&farm_id=eq.${farmId}&order=created_at.desc`);
+  const [tickets, users] = await Promise.all([
+    db(`tickets?select=*&farm_id=eq.${farmId}&order=created_at.desc`),
+    db(`farm_accounts?select=user_id,display_name,email&farm_id=eq.${farmId}`)
+  ]);
+  const userNames = new Map(users.map((user) => [
+    user.user_id,
+    clean(user.display_name) || clean(user.email) || 'Farm user'
+  ]));
+
+  return tickets.map((ticket) => ({
+    ...ticket,
+    scanned_by_name: userNames.get(ticket.scanned_by_user_id) || clean(ticket.scanned_by_name) || 'Farm user'
+  }));
 }
 
 export async function listTicketLogs(filters = {}) {
@@ -397,6 +493,7 @@ export async function listTicketLogs(filters = {}) {
     if (filters.date && !clean(log.date).toLowerCase().includes(clean(filters.date).toLowerCase())) return false;
     if (filters.ticket_number && !clean(log.ticket_number).toLowerCase().includes(clean(filters.ticket_number).toLowerCase())) return false;
     if (filters.elevator && !clean(log.delivered_to).toLowerCase().includes(clean(filters.elevator).toLowerCase())) return false;
+    if (filters.scanned_by && !clean(log.scanned_by_name).toLowerCase().includes(clean(filters.scanned_by).toLowerCase())) return false;
     if (filters.assignment_status && log.assignment_status !== filters.assignment_status) return false;
     if (filters.payment_status && log.payment_status !== filters.payment_status) return false;
     return !search || Object.values(log).some((value) => clean(value).toLowerCase().includes(search));
