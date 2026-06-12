@@ -1,0 +1,18 @@
+name: Weekly grain summary
+
+on:
+  schedule:
+    - cron: '5 16 * * 0'
+    - cron: '5 17 * * 0'
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake BinFlow and send the weekly summary
+        run: |
+          curl --fail-with-body --retry 4 --retry-delay 20 \
+            --request POST \
+            --header "x-binflow-cron-secret: ${{ secrets.BINFLOW_WEEKLY_SUMMARY_SECRET }}" \
+            https://binflow-api.onrender.com/api/weekly-summary/send
