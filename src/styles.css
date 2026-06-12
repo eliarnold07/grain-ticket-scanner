@@ -1117,6 +1117,142 @@ h2 {
   margin-top: 8px;
 }
 
+.weekly-summary {
+  overflow: hidden;
+}
+
+.email-schedule {
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #edf5ec;
+  color: #265d3a;
+  font-size: 0.76rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.weekly-summary-metrics {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.weekly-summary-metrics article {
+  border: 1px solid #d8d2c2;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffdf8;
+}
+
+.weekly-summary-metrics article.positive {
+  border-left: 4px solid #4f8156;
+}
+
+.weekly-summary-metrics article.negative {
+  border-left: 4px solid #b76820;
+}
+
+.weekly-summary-metrics span,
+.weekly-summary-metrics small {
+  display: block;
+  color: #647065;
+}
+
+.weekly-summary-metrics span {
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.weekly-summary-metrics strong {
+  display: block;
+  margin: 5px 0 2px;
+  color: #265d3a;
+  font-size: 1.2rem;
+}
+
+.weekly-crop-grid {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.weekly-crop-grid article {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7faf5;
+}
+
+.weekly-crop-grid strong {
+  margin-right: auto;
+}
+
+.weekly-crop-grid span {
+  color: #526255;
+  font-size: 0.84rem;
+}
+
+.weekly-movement-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.weekly-movement-grid h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.weekly-entry-list {
+  display: grid;
+  gap: 7px;
+}
+
+.weekly-entry-list article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e3ddce;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fffdf8;
+}
+
+.weekly-entry-list strong,
+.weekly-entry-list span,
+.weekly-entry-list time {
+  display: block;
+}
+
+.weekly-entry-list span,
+.weekly-entry-list time,
+.weekly-empty {
+  margin: 3px 0 0;
+  color: #647065;
+  font-size: 0.8rem;
+}
+
+.weekly-entry-value {
+  text-align: left;
+}
+
+.positive-text {
+  color: #397245;
+}
+
+.negative-text {
+  color: #9b541e;
+}
+
+.weekly-empty {
+  border: 1px dashed #d3ccbc;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffdf8;
+}
+
 .contract-form,
 .contract-card {
   border: 1px solid #d5d0c2;
@@ -1443,6 +1579,24 @@ h2 {
   .brief-grid,
   .contract-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .weekly-summary-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .weekly-crop-grid,
+  .weekly-movement-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .weekly-entry-list article {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .weekly-entry-value {
+    text-align: right;
   }
 
   .ticket-log-details.compact-details {

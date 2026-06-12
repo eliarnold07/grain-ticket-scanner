@@ -14,7 +14,17 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: CORS_ORIGIN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
+      - key: BINFLOW_APP_URL
+        sync: false
+      - key: WEEKLY_SUMMARY_CRON_SECRET
         sync: false

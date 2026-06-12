@@ -2,14 +2,16 @@
 
 Private-beta farm operations app for scanning grain tickets, managing bins, tracking inventory transactions, assigning tickets to contracts, and recording payments.
 
-## Private Beta Account Model
+## Farm Account Model
 
-- One Supabase Auth login represents one farm.
-- Employees at that farm share the same login during private beta.
-- Signup automatically creates a `farms` record, a `farm_accounts` link, and `farm_settings`.
+- A signup creates the first administrator account for a farm.
+- Administrators can create scanner-only employee logins from **Users**.
+- Every authenticated user has a `farm_accounts` membership with `farm_id`, `role`, name, and email.
+- Signup automatically creates a `farms` record, an admin `farm_accounts` membership, and `farm_settings`.
 - Every operational row contains `farm_id`.
-- The Express API uses the signed-in user's JWT when querying Supabase.
-- Row Level Security independently prevents one farm from reading or changing another farm's data.
+- Tickets record the authenticated user who submitted them.
+- The Express API validates the signed-in user's JWT, resolves membership on the server, and applies role-based endpoint access.
+- Row Level Security independently prevents cross-farm access and blocks employees from admin-only tables.
 - Google Sheets and local JSON storage are not used.
 
 ## Project Structure
@@ -22,16 +24,20 @@ server/index.js                       Express API and OpenAI ticket extraction
 server/supabaseStore.js               Farm-scoped Supabase data access
 supabase/migrations/001_private_beta.sql
                                       Tables, signup trigger, indexes, and RLS
+supabase/migrations/002_farm_roles.sql
+                                      Admin/employee memberships, ticket attribution, and role RLS
 ```
 
 ## Supabase Setup
 
 1. Create a Supabase project.
 2. Open **SQL Editor**.
-3. Run the complete contents of:
+3. Run the complete contents of these files in order:
 
    ```text
    supabase/migrations/001_private_beta.sql
+   supabase/migrations/002_farm_roles.sql
+   supabase/migrations/003_weekly_summary_deliveries.sql
    ```
 
 4. In **Authentication > Providers**, keep Email enabled.
@@ -51,13 +57,7 @@ inventory_transactions
 farm_settings
 ```
 
-It also enables RLS on every table and creates policies requiring:
-
-```sql
-farm_id = private.current_farm_id()
-```
-
-The current farm is resolved from the authenticated user's `farm_accounts` row. The frontend cannot override this authorization.
+The role migration keeps administrators on the full existing app. Employees may submit tickets for their own farm but cannot directly read ticket history, bins, contracts, payments, transactions, or settings. The current farm and role are resolved from the authenticated user's membership; the frontend cannot override either value.
 
 ## Environment Variables
 
@@ -67,6 +67,11 @@ Backend, locally and on Render:
 OPENAI_API_KEY
 SUPABASE_URL
 SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+RESEND_API_KEY
+RESEND_FROM_EMAIL
+BINFLOW_APP_URL
+WEEKLY_SUMMARY_CRON_SECRET
 CORS_ORIGIN
 PORT
 ```
@@ -74,6 +79,9 @@ PORT
 For local development, the backend can reuse `VITE_SUPABASE_URL` and
 `VITE_SUPABASE_ANON_KEY` when the matching backend variables are omitted.
 Render should still use the explicit backend variable names.
+
+`RESEND_FROM_EMAIL` must use a sender domain verified in Resend. `BINFLOW_APP_URL`
+is the Netlify URL linked from each weekly summary email.
 
 Frontend, locally and on Netlify:
 
@@ -83,7 +91,7 @@ VITE_SUPABASE_URL
 VITE_SUPABASE_ANON_KEY
 ```
 
-The publishable/anon key is designed for browser use. Do not add a Supabase service-role key to the frontend or backend for normal app requests because it would bypass RLS.
+The publishable/anon key is designed for browser use. `SUPABASE_SERVICE_ROLE_KEY` is backend-only and is required to create employee Auth users and complete trusted scanner operations while employee RLS remains restrictive. Never use it in a `VITE_` variable or expose it to Netlify.
 
 ## Local Setup
 
@@ -119,6 +127,11 @@ Add:
 OPENAI_API_KEY
 SUPABASE_URL
 SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+RESEND_API_KEY
+RESEND_FROM_EMAIL=BinFlow <summaries@your-domain.com>
+BINFLOW_APP_URL=https://your-netlify-site.netlify.app
+WEEKLY_SUMMARY_CRON_SECRET=generate_a_long_random_secret
 CORS_ORIGIN=https://your-netlify-site.netlify.app
 ```
 
@@ -153,6 +166,20 @@ Use two different browser profiles, or one normal window and one private/incogni
 
 For a direct security check, copy Farm A's access token from browser storage and query a Farm B row ID through the Supabase REST API. RLS should return no row or reject the change.
 
+## Admin And Employee Test
+
+1. Run both migrations and configure `SUPABASE_SERVICE_ROLE_KEY` on the backend.
+2. Log in as the existing farm administrator.
+3. Open **Users**, enter an employee name, unique email, and temporary password, then create the login.
+   If a previously created employee accidentally received a separate administrator farm, enter that employee's name and email and choose **Repair Existing Employee Login**. Repair is allowed only when the accidental farm has no operational data.
+4. In a private/incognito window, log in with the employee credentials.
+5. Confirm the employee opens directly to Scanner and has no admin navigation.
+6. Scan and submit a ticket as the employee.
+7. Return to the administrator session and open **Ticket History**.
+8. Confirm the ticket appears and the **Scanned By** column shows the employee.
+9. While signed in as the employee, request an admin API such as `/api/bins`; it should return HTTP 403.
+10. Repeat with a second farm and confirm neither farm can read the other's records.
+
 ## Existing Workflows
 
 The following continue to use the authenticated farm's cloud data:
@@ -165,3 +192,23 @@ The following continue to use the authenticated farm's cloud data:
 - Payment tracking
 - Dashboard summaries
 - Shared farm driver list
+- Live Sunday-to-Sunday grain movement summary on the dashboard
+- Weekly admin email summary sent Sunday at noon Eastern when activity exists
+
+## Weekly Grain Summaries
+
+The dashboard summary and email use BinFlow entry timestamps rather than the
+printed ticket date. Each reporting period runs from Sunday at noon to the next
+Sunday at noon in `America/New_York`, including daylight saving time.
+
+The report includes every ticket entered during the period plus manual
+`ADD_GRAIN`, `REMOVE_GRAIN`, and `MANUAL_ADJUSTMENT` inventory transactions.
+Ticket-generated `TICKET_SALE` transactions are excluded from the adjustment
+section so ticket movement is not counted twice. All current farm admins receive
+the email, and farms with no activity are skipped.
+
+The GitHub Actions workflow calls the protected backend trigger at both possible
+Sunday noon UTC offsets. The backend checks Eastern Time before sending, so only
+the correct daylight-saving-time run proceeds. Set the same random value in the
+Render `WEEKLY_SUMMARY_CRON_SECRET` variable and the GitHub
+`BINFLOW_WEEKLY_SUMMARY_SECRET` repository secret.

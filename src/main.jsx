@@ -188,6 +188,20 @@ function percentLabel(value) {
   return value === null || value === undefined ? '-' : `${Math.round(value)}%`;
 }
 
+function signedBushels(value) {
+  const number = Number(value) || 0;
+  return `${number >= 0 ? '+' : ''}${formatNumber(number)} bu`;
+}
+
+function movementLabel(type) {
+  const labels = {
+    ADD_GRAIN: 'Grain added',
+    REMOVE_GRAIN: 'Grain removed',
+    MANUAL_ADJUSTMENT: 'Balance adjusted'
+  };
+  return labels[type] || String(type || '').replaceAll('_', ' ');
+}
+
 function emptyDashboard() {
   return {
     kpis: {
@@ -218,7 +232,20 @@ function emptyDashboard() {
       recent_ticket_activity: []
     },
     bin_overview: [],
-    recent_activity: []
+    recent_activity: [],
+    weekly_summary: {
+      period_label: '',
+      activity_count: 0,
+      ticket_count: 0,
+      ticket_bushels: 0,
+      manual_adjustment_count: 0,
+      grain_added_bushels: 0,
+      grain_removed_bushels: 0,
+      manual_net_bushels: 0,
+      by_crop: [],
+      tickets: [],
+      adjustments: []
+    }
   };
 }
 
@@ -1786,33 +1813,101 @@ function App() {
             </div>
           </section>
 
-          <section className="dashboard-card farm-brief">
+          <section className="dashboard-card weekly-summary">
             <div className="section-title-row">
               <div>
-                <h2>Farm Brief</h2>
-                <p>Small seasonal reminders for the operation.</p>
+                <p className="eyebrow">Sunday to Sunday</p>
+                <h2>Weekly Grain Summary</h2>
+                <p>{dashboard.weekly_summary?.period_label || 'Current Eastern Time reporting period'}</p>
               </div>
+              <span className="email-schedule">Emailed Sundays at noon ET</span>
             </div>
-            <div className="brief-grid">
-              <article>
-                <span>Harvest Prep</span>
-                <h3>Confirm storage headroom</h3>
-                <p>Review current bin balances and leave room for wet grain before the next field starts.</p>
-                <time>Updated June 5, 2026</time>
-              </article>
-              <article>
-                <span>Grain Quality</span>
-                <h3>Watch moisture trends</h3>
-                <p>Compare recent ticket moisture readings before changing dryer or harvest settings.</p>
-                <time>Updated June 5, 2026</time>
-              </article>
-              <article>
-                <span>Reconciliation</span>
-                <h3>Match payments weekly</h3>
-                <p>Assign delivered tickets and record checks or ACH payments before statements pile up.</p>
-                <time>Updated June 5, 2026</time>
-              </article>
-            </div>
+            {dashboard.weekly_summary?.activity_count === 0 ? (
+              <div className="premium-empty">
+                No grain movement has been entered this week. Empty weeks are not emailed.
+              </div>
+            ) : (
+              <>
+                <div className="weekly-summary-metrics">
+                  <article>
+                    <span>Ticket movement</span>
+                    <strong>{formatNumber(dashboard.weekly_summary?.ticket_bushels)} bu</strong>
+                    <small>{formatNumber(dashboard.weekly_summary?.ticket_count)} ticket entries</small>
+                  </article>
+                  <article className="positive">
+                    <span>Manually added</span>
+                    <strong>+{formatNumber(dashboard.weekly_summary?.grain_added_bushels)} bu</strong>
+                    <small>Bin additions and upward corrections</small>
+                  </article>
+                  <article className="negative">
+                    <span>Manually removed</span>
+                    <strong>-{formatNumber(dashboard.weekly_summary?.grain_removed_bushels)} bu</strong>
+                    <small>Bin removals and downward corrections</small>
+                  </article>
+                  <article>
+                    <span>Manual net change</span>
+                    <strong>{signedBushels(dashboard.weekly_summary?.manual_net_bushels)}</strong>
+                    <small>{formatNumber(dashboard.weekly_summary?.manual_adjustment_count)} adjustments</small>
+                  </article>
+                </div>
+
+                {dashboard.weekly_summary?.by_crop?.length > 0 && (
+                  <div className="weekly-crop-grid">
+                    {dashboard.weekly_summary.by_crop.map((crop) => (
+                      <article key={crop.crop}>
+                        <strong>{crop.crop}</strong>
+                        <span>{formatNumber(crop.ticket_bushels)} ticket bu</span>
+                        <span>{signedBushels(crop.manual_net_bushels)} manual</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+
+                <div className="weekly-movement-grid">
+                  <div>
+                    <h3>Ticket History Activity</h3>
+                    <div className="weekly-entry-list">
+                      {dashboard.weekly_summary?.tickets?.length === 0 ? (
+                        <p className="weekly-empty">No ticket entries this week.</p>
+                      ) : dashboard.weekly_summary.tickets.map((entry) => (
+                        <article key={entry.id}>
+                          <div>
+                            <strong>Ticket {entry.ticket_number || 'without a number'}</strong>
+                            <span>{entry.crop || 'Unspecified'} · {entry.hauled_from || 'No source'} to {entry.delivered_to || 'No destination'}</span>
+                          </div>
+                          <div className="weekly-entry-value">
+                            <strong>{formatNumber(entry.bushels)} bu</strong>
+                            <time>{new Date(entry.created_at).toLocaleString()}</time>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3>Manual Bin Adjustments</h3>
+                    <div className="weekly-entry-list">
+                      {dashboard.weekly_summary?.adjustments?.length === 0 ? (
+                        <p className="weekly-empty">No manual bin adjustments this week.</p>
+                      ) : dashboard.weekly_summary.adjustments.map((entry) => (
+                        <article key={entry.id}>
+                          <div>
+                            <strong>{movementLabel(entry.transaction_type)} · {entry.bin_name}</strong>
+                            <span>{entry.crop_type || 'Unspecified'} · {formatNumber(entry.previous_bin_balance)} to {formatNumber(entry.new_bin_balance)} bu</span>
+                          </div>
+                          <div className="weekly-entry-value">
+                            <strong className={entry.bushel_change < 0 ? 'negative-text' : 'positive-text'}>
+                              {signedBushels(entry.bushel_change)}
+                            </strong>
+                            <time>{new Date(entry.created_at).toLocaleString()}</time>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </section>
         </section>
       )}

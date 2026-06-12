@@ -35,6 +35,16 @@ import {
   updateTicketLog,
   updateBin
 } from './supabaseStore.js';
+import {
+  buildWeeklySummary,
+  isWeeklySummarySendTime,
+  weeklySummaryWindow,
+  WEEKLY_SUMMARY_TIME_ZONE
+} from './weeklySummary.js';
+import {
+  sendWeeklySummaries,
+  startWeeklySummaryScheduler
+} from './weeklySummaryScheduler.js';
 
 const app = express();
 const upload = multer({
@@ -86,7 +96,7 @@ const employeeRoutes = new Set([
 ]);
 
 app.use('/api', (req, res, next) => {
-  if (req.path === '/health') return next();
+  if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
 
   const account = currentAccount();
   if (account?.role === 'admin') return next();
@@ -295,6 +305,31 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/weekly-summary/send', async (req, res) => {
+  const expectedSecret = cleanSpaces(process.env.WEEKLY_SUMMARY_CRON_SECRET);
+  const providedSecret = cleanSpaces(req.get('x-binflow-cron-secret'));
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    return res.status(401).json({ error: 'Invalid weekly summary trigger.' });
+  }
+
+  const now = new Date();
+  if (!isWeeklySummarySendTime(now, WEEKLY_SUMMARY_TIME_ZONE)) {
+    return res.json({ ok: true, skipped: 'outside Sunday noon Eastern' });
+  }
+
+  try {
+    const results = await sendWeeklySummaries(now);
+    res.json({ ok: true, results });
+  } catch (error) {
+    logError('Weekly summary trigger failed', error);
+    res.status(500).json({
+      error: 'Could not send weekly summaries.',
+      detail: error.message
+    });
+  }
+});
+
 app.get('/api/session', (_req, res) => {
   res.json({ farm: currentFarm(), account: currentAccount() });
 });
@@ -347,6 +382,15 @@ app.get('/api/dashboard', async (_req, res) => {
         return paymentDate.getFullYear() === now.getFullYear() && paymentDate.getMonth() === now.getMonth();
       })
       .reduce((sum, log) => sum + numberValue(log.amount_received), 0);
+    const weeklyWindow = weeklySummaryWindow(now, WEEKLY_SUMMARY_TIME_ZONE);
+    const weeklySummary = buildWeeklySummary({
+      tickets: ticketLogs,
+      transactions,
+      bins,
+      periodStart: weeklyWindow.periodStart,
+      periodEnd: now,
+      timeZone: WEEKLY_SUMMARY_TIME_ZONE
+    });
     const recentActivities = [
       ...ticketLogs.slice(0, 12).map((log) => ({
         id: `ticket-${log.id}`,
@@ -396,7 +440,8 @@ app.get('/api/dashboard', async (_req, res) => {
         }))
       },
       bin_overview: bins,
-      recent_activity: recentActivities
+      recent_activity: recentActivities,
+      weekly_summary: weeklySummary
     });
   } catch (error) {
     logError('Dashboard fetch failed', error);
@@ -893,4 +938,7 @@ app.listen(port, () => {
   console.log(`Grain Ticket Scanner API running on port ${port}`);
   console.log('Ticket storage mode: Supabase');
   console.log(`Supabase privileged server access: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'missing (employee account features unavailable)'}`);
+  console.log(`Weekly summary email: ${process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL ? 'configured' : 'missing Resend configuration'}`);
 });
+
+startWeeklySummaryScheduler();

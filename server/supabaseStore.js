@@ -51,6 +51,13 @@ async function rawRequest(path, { token, method = 'GET', body, prefer, serviceRo
   return data;
 }
 
+function serviceDb(path, options = {}) {
+  return rawRequest(`/rest/v1/${path}`, {
+    ...options,
+    serviceRole: true
+  });
+}
+
 async function buildContext(accessToken) {
   const user = await rawRequest('/auth/v1/user', { token: accessToken });
   const useServiceRole = Boolean(supabaseServiceRoleKey);
@@ -85,7 +92,7 @@ async function buildContext(accessToken) {
 }
 
 export async function requireSupabaseAuth(req, res, next) {
-  if (req.path === '/health') return next();
+  if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
 
   const token = clean(req.get('authorization')).replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ error: 'Please log in to continue.' });
@@ -134,6 +141,41 @@ async function db(path, options = {}) {
 export async function listFarmUsers() {
   const { farmId } = context();
   return db(`farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&farm_id=eq.${farmId}&order=created_at.asc`);
+}
+
+export async function listWeeklySummaryFarms() {
+  return serviceDb('farms?select=id,name&order=created_at.asc');
+}
+
+export async function getWeeklySummaryFarmData(farmId, periodStart, periodEnd) {
+  const start = encodeURIComponent(new Date(periodStart).toISOString());
+  const end = encodeURIComponent(new Date(periodEnd).toISOString());
+  const farm = encodeURIComponent(farmId);
+  const [tickets, transactions, bins, admins] = await Promise.all([
+    serviceDb(`tickets?select=*&farm_id=eq.${farm}&created_at=gte.${start}&created_at=lt.${end}&order=created_at.asc`),
+    serviceDb(`inventory_transactions?select=*&farm_id=eq.${farm}&created_at=gte.${start}&created_at=lt.${end}&order=created_at.asc`),
+    serviceDb(`bins?select=id,bin_name&farm_id=eq.${farm}`),
+    serviceDb(`farm_accounts?select=display_name,email&farm_id=eq.${farm}&role=eq.admin&order=created_at.asc`)
+  ]);
+  return { tickets, transactions, bins, admins };
+}
+
+export async function getWeeklySummaryDelivery(farmId, periodEnd) {
+  const farm = encodeURIComponent(farmId);
+  const end = encodeURIComponent(new Date(periodEnd).toISOString());
+  const rows = await serviceDb(
+    `weekly_summary_deliveries?select=*&farm_id=eq.${farm}&period_end=eq.${end}&limit=1`
+  );
+  return rows[0] || null;
+}
+
+export async function recordWeeklySummaryDelivery(input) {
+  const rows = await serviceDb('weekly_summary_deliveries', {
+    method: 'POST',
+    prefer: 'return=representation',
+    body: input
+  });
+  return rows[0];
 }
 
 async function attachEmployeeToFarm(user, { farmId, displayName, email }) {
