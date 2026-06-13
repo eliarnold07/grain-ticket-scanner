@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import binFlowMark from './assets/binflow-mark.png';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
 
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
@@ -170,6 +171,10 @@ function uniqueOptions(values = []) {
 
 function displayValue(value) {
   return String(value || '').trim() || '-';
+}
+
+function displayCrop(value) {
+  return value === 'Beans' ? 'Soybeans' : displayValue(value);
 }
 
 function formatNumber(value) {
@@ -1514,7 +1519,10 @@ function App() {
     return (
       <main className="auth-shell">
         <section className="auth-card auth-loading">
-          <p className="eyebrow">BinFlow</p>
+          <div className="brand-lockup compact">
+            <img src={binFlowMark} alt="" />
+            <span>BinFlow</span>
+          </div>
           <h2>Loading farm account...</h2>
         </section>
       </main>
@@ -1525,9 +1533,13 @@ function App() {
     return (
       <main className="auth-shell">
         <section className="auth-brand">
-          <p className="eyebrow">Private farm operations</p>
-          <h1>BinFlow</h1>
-          <p>Tickets, grain inventory, contracts, and payments kept separate for your farm.</p>
+          <div className="brand-lockup">
+            <img src={binFlowMark} alt="" />
+            <span>BinFlow</span>
+          </div>
+          <p className="eyebrow">Professional grain operations</p>
+          <h1>Know where every bushel stands.</h1>
+          <p>Scan tickets, manage corn and soybean inventory, track contracts, and keep your farm records together.</p>
         </section>
 
         <form className="auth-card" onSubmit={submitAuth}>
@@ -1566,7 +1578,10 @@ function App() {
     return (
       <main className="auth-shell">
         <section className="auth-card auth-loading">
-          <p className="eyebrow">BinFlow</p>
+          <div className="brand-lockup compact">
+            <img src={binFlowMark} alt="" />
+            <span>BinFlow</span>
+          </div>
           <h2>Loading your farm workspace...</h2>
         </section>
       </main>
@@ -1576,9 +1591,9 @@ function App() {
   return (
     <main className={`app-shell ${isEmployee ? 'employee-shell' : ''}`}>
       <section className="header-band">
-        <div>
-          <p className="eyebrow">Grain operations platform</p>
-          <h1>BinFlow</h1>
+        <div className="brand-lockup">
+          <img src={binFlowMark} alt="" />
+          <span>BinFlow</span>
         </div>
         <div className="account-tools">
           <div>
@@ -1593,6 +1608,7 @@ function App() {
       {isAdmin && <nav className="view-tabs" aria-label="App views">
         <button
           className={activeView === 'dashboard' ? 'active' : ''}
+          aria-current={activeView === 'dashboard' ? 'page' : undefined}
           type="button"
           onClick={() => {
             setActiveView('dashboard');
@@ -1603,33 +1619,37 @@ function App() {
         </button>
         <button
           className={activeView === 'scanner' ? 'active' : ''}
+          aria-current={activeView === 'scanner' ? 'page' : undefined}
           type="button"
           onClick={() => setActiveView('scanner')}
         >
-          Scanner
+          Scan
         </button>
         <button
           className={activeView === 'history' ? 'active' : ''}
+          aria-current={activeView === 'history' ? 'page' : undefined}
           type="button"
           onClick={() => {
             setActiveView('history');
             loadTicketHistory();
           }}
         >
-          Ticket History
+          History
         </button>
         <button
           className={activeView === 'inventory' ? 'active' : ''}
+          aria-current={activeView === 'inventory' ? 'page' : undefined}
           type="button"
           onClick={() => {
             setActiveView('inventory');
             loadBins();
           }}
         >
-          Grain Bins
+          Bins
         </button>
         <button
           className={activeView === 'contracts' ? 'active' : ''}
+          aria-current={activeView === 'contracts' ? 'page' : undefined}
           type="button"
           onClick={() => {
             setActiveView('contracts');
@@ -1640,6 +1660,7 @@ function App() {
         </button>
         <button
           className={activeView === 'users' ? 'active' : ''}
+          aria-current={activeView === 'users' ? 'page' : undefined}
           type="button"
           onClick={() => {
             setActiveView('users');
@@ -1654,12 +1675,12 @@ function App() {
         <section className="dashboard-view">
           <div className="dashboard-hero">
             <div>
-              <p className="eyebrow">Current inventory snapshot</p>
-              <h2>Harvest operations at a glance</h2>
-              <p>Track stored grain, scanned tickets, and recent inventory movement from one operational dashboard.</p>
+              <p className="eyebrow">Good to see you, {account.display_name?.split(' ')[0] || 'there'}</p>
+              <h2>{farm?.name || 'Your farm'}</h2>
+              <p><span className="system-status-dot" /> All systems normal</p>
             </div>
             <div className="quick-actions">
-              <button type="button" onClick={() => setActiveView('scanner')}>Scan Ticket</button>
+              <button className="scan-action" type="button" onClick={() => setActiveView('scanner')}>Scan New Ticket</button>
               <button type="button" onClick={() => setActiveView('inventory')}>Manage Bins</button>
               <button type="button" onClick={() => setActiveView('history')}>View Logs</button>
               <button type="button" onClick={() => setActiveView('contracts')}>Manage Contracts</button>
@@ -1673,7 +1694,7 @@ function App() {
               <small>bushels</small>
             </article>
             <article className="kpi-card beans">
-              <span>Total Bean Inventory</span>
+              <span>Total Soybean Inventory</span>
               <strong>{formatNumber(dashboard.kpis.total_bean_inventory)}</strong>
               <small>bushels</small>
             </article>
@@ -1730,7 +1751,7 @@ function App() {
                   const width = ((Number(item.bushels) || 0) / max) * 100;
                   return (
                     <div className="chart-row" key={item.crop}>
-                      <span>{item.crop}</span>
+                      <span>{displayCrop(item.crop)}</span>
                       <div><i style={{ width: `${width}%` }} /></div>
                       <strong>{formatNumber(item.bushels)}</strong>
                     </div>
@@ -1774,7 +1795,7 @@ function App() {
                   <article className={`dashboard-bin-card ${statusClass}`} key={bin.id}>
                     <div>
                       <h3>{bin.bin_name}</h3>
-                      <p>{displayValue(bin.crop_type)}</p>
+                      <p>{displayCrop(bin.crop_type)}</p>
                     </div>
                     <strong>{formatNumber(bin.current_bushels)} bu</strong>
                     <div className="capacity-bar">
@@ -1855,7 +1876,7 @@ function App() {
                   <div className="weekly-crop-grid">
                     {dashboard.weekly_summary.by_crop.map((crop) => (
                       <article key={crop.crop}>
-                        <strong>{crop.crop}</strong>
+                        <strong>{displayCrop(crop.crop)}</strong>
                         <span>{formatNumber(crop.ticket_bushels)} ticket bu</span>
                         <span>{signedBushels(crop.manual_net_bushels)} manual</span>
                       </article>
@@ -1873,7 +1894,7 @@ function App() {
                         <article key={entry.id}>
                           <div>
                             <strong>Ticket {entry.ticket_number || 'without a number'}</strong>
-                            <span>{entry.crop || 'Unspecified'} · {entry.hauled_from || 'No source'} to {entry.delivered_to || 'No destination'}</span>
+                            <span>{displayCrop(entry.crop)} · {entry.hauled_from || 'No source'} to {entry.delivered_to || 'No destination'}</span>
                           </div>
                           <div className="weekly-entry-value">
                             <strong>{formatNumber(entry.bushels)} bu</strong>
@@ -1893,7 +1914,7 @@ function App() {
                         <article key={entry.id}>
                           <div>
                             <strong>{movementLabel(entry.transaction_type)} · {entry.bin_name}</strong>
-                            <span>{entry.crop_type || 'Unspecified'} · {formatNumber(entry.previous_bin_balance)} to {formatNumber(entry.new_bin_balance)} bu</span>
+                            <span>{displayCrop(entry.crop_type)} · {formatNumber(entry.previous_bin_balance)} to {formatNumber(entry.new_bin_balance)} bu</span>
                           </div>
                           <div className="weekly-entry-value">
                             <strong className={entry.bushel_change < 0 ? 'negative-text' : 'positive-text'}>
@@ -1944,7 +1965,7 @@ function App() {
                 type="text"
                 value={historyFilters.crop}
                 onChange={(event) => updateHistoryFilter('crop', event.target.value)}
-                placeholder="Corn or Beans"
+                placeholder="Corn or Soybeans"
               />
             </label>
             <label className="field">
@@ -2136,7 +2157,7 @@ function App() {
                     <tr key={log.id}>
                       <td className="primary-cell">{displayValue(log.ticket_number)}</td>
                       <td>{displayValue(log.date)}</td>
-                      <td>{displayValue(log.crop)}</td>
+                      <td>{displayCrop(log.crop)}</td>
                       <td>{displayValue(log.hauled_from)}</td>
                       <td>{displayValue(log.delivered_to)}</td>
                       <td>{formatNumber(log.gross_weight)}</td>
@@ -2188,7 +2209,7 @@ function App() {
                 <select value={contractForm.commodity} onChange={(event) => updateContractForm('commodity', event.target.value)}>
                   <option value="">Choose crop</option>
                   <option>Corn</option>
-                  <option>Beans</option>
+                  <option value="Beans">Soybeans</option>
                 </select>
               </label>
               <label className="field">
@@ -2235,7 +2256,7 @@ function App() {
                 <article className="contract-card" key={contract.id}>
                   <div className="contract-head">
                     <div>
-                      <span>{contract.commodity} · {contract.status}</span>
+                      <span>{displayCrop(contract.commodity)} · {contract.status}</span>
                       <h3>{contract.contract_id}</h3>
                       <p>{contract.buyer}</p>
                     </div>
@@ -2277,7 +2298,7 @@ function App() {
                 <select value={binForm.crop_type} onChange={(event) => updateBinForm('crop_type', event.target.value)}>
                   <option value="">Choose crop</option>
                   <option value="Corn">Corn</option>
-                  <option value="Beans">Beans</option>
+                  <option value="Beans">Soybeans</option>
                 </select>
               </label>
               <label className="field">
@@ -2320,7 +2341,7 @@ function App() {
                     <div className="bin-card-head">
                       <div>
                         <h3>{bin.bin_name}</h3>
-                        <p>{displayValue(bin.crop_type)} · {formatNumber(bin.current_bushels)} bu</p>
+                        <p>{displayCrop(bin.crop_type)} · {formatNumber(bin.current_bushels)} bu</p>
                       </div>
                       <strong>{percent === null ? '-' : `${percent}% full`}</strong>
                     </div>
