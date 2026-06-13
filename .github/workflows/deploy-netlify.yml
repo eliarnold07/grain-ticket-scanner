@@ -1,1 +1,39 @@
-{"name":"Deploy BinFlow to Netlify","on":{"push":{"branches":["develop"]},"workflow_dispatch":{}},"permissions":{"contents":"read"},"concurrency":{"group":"binflow-production","cancel-in-progress":true},"jobs":{"deploy":{"runs-on":"ubuntu-latest","steps":[{"uses":"actions/checkout@v4"},{"uses":"actions/setup-node@v4","with":{"node-version":20,"cache":"npm"}},{"run":"npm ci"},{"run":"npm test"},{"name":"Build production app","run":"test -n \"$VITE_SUPABASE_URL\" && test -n \"$VITE_SUPABASE_ANON_KEY\" && npm run build","env":{"VITE_API_URL":"https://binflow-api.onrender.com","VITE_SUPABASE_URL":"${{ secrets.VITE_SUPABASE_URL }}","VITE_SUPABASE_ANON_KEY":"${{ secrets.VITE_SUPABASE_ANON_KEY }}"}},{"run":"npx --yes netlify-cli@latest deploy --dir=dist --prod --site=$NETLIFY_SITE_ID --message=GitHub-Actions-$GITHUB_SHA","env":{"NETLIFY_AUTH_TOKEN":"${{ secrets.NETLIFY_AUTH_TOKEN }}","NETLIFY_SITE_ID":"${{ secrets.NETLIFY_SITE_ID }}"}}]}}}
+name: Deploy BinFlow to Netlify
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binflow-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build production app
+        env:
+          VITE_API_URL: https://binflow-api.onrender.com
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          node -e "if (!process.env.VITE_SUPABASE_URL?.trim() || !process.env.VITE_SUPABASE_ANON_KEY?.trim()) process.exit(1)"
+          npm run build
+      - name: Deploy production app
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: npx --yes netlify-cli@latest deploy --dir=dist --prod --site="$NETLIFY_SITE_ID" --message="GitHub-Actions-$GITHUB_SHA"
