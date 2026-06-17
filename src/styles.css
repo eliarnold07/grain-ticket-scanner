@@ -903,7 +903,7 @@ h2 {
 
 .ticket-table {
   width: 100%;
-  min-width: 1760px;
+  min-width: 1360px;
   border-collapse: collapse;
   font-size: 0.82rem;
 }
@@ -975,6 +975,25 @@ h2 {
   color: #39493d;
   font-size: 0.72rem;
   font-weight: 900;
+}
+
+.payment-toggle {
+  min-height: 30px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.payment-toggle:hover:not(:disabled),
+.payment-toggle:focus-visible {
+  border-color: currentColor;
+  box-shadow: 0 0 0 3px rgba(38, 93, 58, 0.14);
+}
+
+.payment-toggle:disabled {
+  cursor: wait;
 }
 
 .status-tag.contract,

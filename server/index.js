@@ -391,25 +391,6 @@ app.get('/api/dashboard', async (_req, res) => {
       periodEnd: now,
       timeZone: WEEKLY_SUMMARY_TIME_ZONE
     });
-    const recentActivities = [
-      ...ticketLogs.slice(0, 12).map((log) => ({
-        id: `ticket-${log.id}`,
-        type: 'TICKET_SCAN',
-        label: `Ticket ${log.ticket_number || 'logged'}`,
-        detail: `${log.crop || 'Unknown crop'} · ${log.bushels || 0} bu · ${log.hauled_from || 'No source'}`,
-        timestamp: log.created_at
-      })),
-      ...transactions.slice(0, 12).map((transaction) => ({
-        id: `transaction-${transaction.id}`,
-        type: transaction.transaction_type,
-        label: transaction.transaction_type.replaceAll('_', ' '),
-        detail: `${transaction.bushel_amount} bu · ${transaction.previous_bin_balance} to ${transaction.new_bin_balance}`,
-        timestamp: transaction.created_at
-      }))
-    ]
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 10);
-
     res.json({
       kpis: {
         total_corn_inventory: totalCornInventory,
@@ -440,7 +421,6 @@ app.get('/api/dashboard', async (_req, res) => {
         }))
       },
       bin_overview: bins,
-      recent_activity: recentActivities,
       weekly_summary: weeklySummary
     });
   } catch (error) {

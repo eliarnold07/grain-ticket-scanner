@@ -237,7 +237,6 @@ function emptyDashboard() {
       recent_ticket_activity: []
     },
     bin_overview: [],
-    recent_activity: [],
     weekly_summary: {
       period_label: '',
       activity_count: 0,
@@ -297,6 +296,7 @@ function App() {
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [isLoadingDropdowns, setIsLoadingDropdowns] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [updatingPaymentIds, setUpdatingPaymentIds] = useState([]);
   const [isSuccess, setIsSuccess] = useState(false);
   const [ticketLogs, setTicketLogs] = useState([]);
   const [contracts, setContracts] = useState([]);
@@ -856,6 +856,42 @@ function App() {
       setStatus('Ticket assignment and payment details updated.');
     } catch (error) {
       setStatus(cleanMessage(error));
+    }
+  }
+
+  async function toggleTicketPayment(log) {
+    if (updatingPaymentIds.includes(log.id)) return;
+
+    const previousStatus = log.payment_status || 'Not paid';
+    const paymentStatus = previousStatus === 'Paid' ? 'Not paid' : 'Paid';
+    const updatedTicket = ticketEditForm({ ...log, payment_status: paymentStatus });
+
+    setUpdatingPaymentIds((current) => [...current, log.id]);
+    setTicketLogs((current) => current.map((ticketLog) => (
+      ticketLog.id === log.id ? { ...ticketLog, payment_status: paymentStatus } : ticketLog
+    )));
+
+    try {
+      const response = await apiFetch(`/api/ticket-logs/${log.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedTicket)
+      });
+
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await response.json();
+      setTicketLogs((current) => current.map((ticketLog) => (
+        ticketLog.id === log.id ? { ...ticketLog, ...data.ticket } : ticketLog
+      )));
+      loadDashboard({ silent: true });
+      setStatus(`Ticket ${log.ticket_number || ''} marked ${paymentStatus.toLowerCase()}.`);
+    } catch (error) {
+      setTicketLogs((current) => current.map((ticketLog) => (
+        ticketLog.id === log.id ? { ...ticketLog, payment_status: previousStatus } : ticketLog
+      )));
+      setStatus(cleanMessage(error));
+    } finally {
+      setUpdatingPaymentIds((current) => current.filter((id) => id !== log.id));
     }
   }
 
@@ -1808,32 +1844,6 @@ function App() {
             </div>
           </section>
 
-          <section className="dashboard-card">
-            <div className="section-title-row">
-              <div>
-                <h2>Recent Activity</h2>
-                <p>Ticket scans, inventory changes, manual adjustments, and reversals.</p>
-              </div>
-              <button type="button" onClick={() => loadDashboard()} disabled={isLoadingDashboard}>
-                {isLoadingDashboard ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </div>
-            <div className="activity-list">
-              {dashboard.recent_activity.length === 0 ? (
-                <div className="premium-empty">No activity yet. Scanned tickets and inventory changes will appear here.</div>
-              ) : dashboard.recent_activity.map((activity) => (
-                <article className="activity-item" key={activity.id}>
-                  <span className={`activity-badge ${activity.type.toLowerCase().replaceAll('_', '-')}`}>{activity.type.replaceAll('_', ' ')}</span>
-                  <div>
-                    <h3>{activity.label}</h3>
-                    <p>{activity.detail}</p>
-                  </div>
-                  <time>{new Date(activity.timestamp).toLocaleString()}</time>
-                </article>
-              ))}
-            </div>
-          </section>
-
           <section className="dashboard-card weekly-summary">
             <div className="section-title-row">
               <div>
@@ -2142,9 +2152,8 @@ function App() {
                   <tr>
                     {[
                       ['ticket_number', 'Ticket'], ['date', 'Date'], ['crop', 'Crop'], ['hauled_from', 'Hauled From'],
-                      ['delivered_to', 'Delivered To'], ['gross_weight', 'Gross'], ['tare_weight', 'Tare'],
-                      ['net_weight', 'Net'], ['bushels', 'Bushels'], ['moisture', 'Moisture'], ['price', 'Price'],
-                      ['revenue', 'Revenue'], ['hauled_by', 'Hauled By'], ['notes', 'Notes'],
+                      ['delivered_to', 'Delivered To'], ['bushels', 'Bushels'], ['moisture', 'Moisture'], ['price', 'Price'],
+                      ['revenue', 'Revenue'], ['hauled_by', 'Hauled By'],
                       ['scanned_by_name', 'Scanned By'], ['assignment_status', 'Assignment'], ['payment_status', 'Payment']
                     ].map(([key, label]) => (
                       <th key={key}><button type="button" onClick={() => toggleHistorySort(key)}>{label}</button></th>
@@ -2160,18 +2169,25 @@ function App() {
                       <td>{displayCrop(log.crop)}</td>
                       <td>{displayValue(log.hauled_from)}</td>
                       <td>{displayValue(log.delivered_to)}</td>
-                      <td>{formatNumber(log.gross_weight)}</td>
-                      <td>{formatNumber(log.tare_weight)}</td>
-                      <td>{formatNumber(log.net_weight)}</td>
                       <td>{formatNumber(log.bushels)}</td>
                       <td>{formatNumber(log.moisture)}</td>
                       <td>{formatCurrency(log.price)}</td>
                       <td>{formatCurrency(log.revenue)}</td>
                       <td>{displayValue(log.hauled_by)}</td>
-                      <td className="notes-cell">{displayValue(log.notes)}</td>
                       <td>{displayValue(log.scanned_by_name)}</td>
                       <td><span className={`status-tag ${(log.assignment_status || 'Unassigned').toLowerCase()}`}>{log.assignment_status || 'Unassigned'}</span></td>
-                      <td><span className={`status-tag ${(log.payment_status || 'Not paid').toLowerCase().replaceAll(' ', '-')}`}>{log.payment_status || 'Not paid'}</span></td>
+                      <td>
+                        <button
+                          className={`status-tag payment-toggle ${(log.payment_status || 'Not paid').toLowerCase().replaceAll(' ', '-')}`}
+                          type="button"
+                          onClick={() => toggleTicketPayment(log)}
+                          disabled={updatingPaymentIds.includes(log.id)}
+                          aria-label={`Mark ticket ${log.ticket_number || ''} as ${(log.payment_status || 'Not paid') === 'Paid' ? 'not paid' : 'paid'}`}
+                          title="Click to toggle paid status"
+                        >
+                          {updatingPaymentIds.includes(log.id) ? 'Saving...' : log.payment_status || 'Not paid'}
+                        </button>
+                      </td>
                       <td>
                         <div className="table-actions">
                           <button type="button" onClick={() => startEditingTicket(log)}>Edit</button>
