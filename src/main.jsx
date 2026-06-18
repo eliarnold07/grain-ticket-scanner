@@ -1784,7 +1784,6 @@ function App() {
             <div className="finance-grid">
               <article><span>Unpaid Delivered</span><strong>{formatNumber(dashboard.finance?.unpaid_delivered_bushels)} bu</strong></article>
               <article><span>Unpaid Estimated</span><strong>{formatCurrency(dashboard.finance?.unpaid_estimated_dollars)}</strong></article>
-              <article><span>Received This Month</span><strong>{formatCurrency(dashboard.finance?.payments_received_this_month)}</strong></article>
               <article><span>Open Contract Balances</span><strong>{formatNumber(dashboard.finance?.contracts_with_remaining_bushels)}</strong></article>
               <article><span>Unassigned Tickets</span><strong>{formatNumber(dashboard.finance?.unassigned_tickets)}</strong></article>
             </div>
