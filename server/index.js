@@ -9,7 +9,7 @@ import {
   createBin,
   createContract,
   createDriver,
-  createEmployeeAccount,
+  createFarmUserAccount,
   createInventoryTransaction,
   createTicketSaleTransaction,
   deleteBin,
@@ -32,6 +32,7 @@ import {
   currentAccount,
   currentFarm,
   updateContract,
+  updateFarmUserRole,
   updateTicketLog,
   updateBin
 } from './supabaseStore.js';
@@ -536,10 +537,19 @@ app.get('/api/users', async (_req, res) => {
 
 app.post('/api/users', async (req, res) => {
   try {
-    res.status(201).json({ user: await createEmployeeAccount(req.body || {}) });
+    res.status(201).json({ user: await createFarmUserAccount(req.body || {}) });
   } catch (error) {
-    logError('Employee account creation failed', error);
-    res.status(400).json({ error: 'Could not create employee account.', detail: error.message });
+    logError('Farm user account creation failed', error);
+    res.status(400).json({ error: 'Could not create farm user account.', detail: error.message });
+  }
+});
+
+app.patch('/api/users/:id/role', async (req, res) => {
+  try {
+    res.json({ user: await updateFarmUserRole(req.params.id, req.body?.role) });
+  } catch (error) {
+    logError('Farm user role update failed', error);
+    res.status(400).json({ error: 'Could not update user role.', detail: error.message });
   }
 });
 

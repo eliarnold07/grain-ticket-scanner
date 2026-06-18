@@ -5,7 +5,7 @@ Private-beta farm operations app for scanning grain tickets, managing bins, trac
 ## Farm Account Model
 
 - A signup creates the first administrator account for a farm.
-- Administrators can create scanner-only employee logins from **Users**.
+- Administrators can create administrator or scanner-only employee logins from **Users**, and can promote employees to administrator access.
 - Every authenticated user has a `farm_accounts` membership with `farm_id`, `role`, name, and email.
 - Signup automatically creates a `farms` record, an admin `farm_accounts` membership, and `farm_settings`.
 - Every operational row contains `farm_id`.

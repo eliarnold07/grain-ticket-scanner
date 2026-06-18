@@ -51,7 +51,8 @@ const blankContractForm = {
 const blankEmployeeForm = {
   display_name: '',
   email: '',
-  password: ''
+  password: '',
+  role: 'employee'
 };
 
 function ticketEditForm(log = {}) {
@@ -729,12 +730,13 @@ function App() {
     setEmployeeForm((current) => ({ ...current, [field]: value }));
   }
 
-  async function createEmployee(event) {
+  async function createFarmUser(event) {
     event.preventDefault();
     if (isCreatingEmployee) return;
 
     setIsCreatingEmployee(true);
-    setUserStatus('Creating employee login...');
+    const roleLabel = employeeForm.role === 'admin' ? 'administrator' : 'employee';
+    setUserStatus(`Creating ${roleLabel} login...`);
     try {
       const response = await apiFetch('/api/users', {
         method: 'POST',
@@ -744,11 +746,29 @@ function App() {
       if (!response.ok) throw new Error(await readErrorResponse(response));
       setEmployeeForm(blankEmployeeForm);
       await loadFarmUsers({ silent: true });
-      setUserStatus('Employee account created. They can now log in with that email and password.');
+      setUserStatus(`${roleLabel === 'administrator' ? 'Administrator' : 'Employee'} account created. They can now log in with that email and password.`);
     } catch (error) {
       setUserStatus(cleanMessage(error));
     } finally {
       setIsCreatingEmployee(false);
+    }
+  }
+
+  async function promoteUser(user) {
+    if (user.role === 'admin') return;
+
+    setUserStatus(`Promoting ${user.display_name || user.email} to administrator...`);
+    try {
+      const response = await apiFetch(`/api/users/${user.user_id}/role`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'admin' })
+      });
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      await loadFarmUsers({ silent: true });
+      setUserStatus(`${user.display_name || user.email} is now an administrator.`);
+    } catch (error) {
+      setUserStatus(cleanMessage(error));
     }
   }
 
@@ -2435,23 +2455,33 @@ function App() {
         <section className="users-panel">
           <div className="form-heading">
             <h2>Farm Users</h2>
-            <p>Create scanner-only employee logins and see who belongs to this farm.</p>
+            <p>Add administrators or scanner-only employees and manage who can access this farm.</p>
           </div>
           {userStatus && <div className="notice">{userStatus}</div>}
 
           <div className="user-management-grid">
-            <form className="employee-form" onSubmit={createEmployee}>
+            <form className="employee-form" onSubmit={createFarmUser}>
               <div className="form-heading compact-heading">
-                <h3>Add Employee</h3>
-                <p>The employee will only have access to ticket scanning.</p>
+                <h3>Add Farm User</h3>
+                <p>Administrators manage the full farm. Employees only scan and submit tickets.</p>
               </div>
               <label className="field">
-                <span>Employee Name</span>
+                <span>Name</span>
                 <input
                   value={employeeForm.display_name}
                   onChange={(event) => updateEmployeeForm('display_name', event.target.value)}
                   required
                 />
+              </label>
+              <label className="field">
+                <span>Role</span>
+                <select
+                  value={employeeForm.role}
+                  onChange={(event) => updateEmployeeForm('role', event.target.value)}
+                >
+                  <option value="employee">Employee — ticket scanner only</option>
+                  <option value="admin">Administrator — full farm access</option>
+                </select>
               </label>
               <label className="field">
                 <span>Email</span>
@@ -2473,7 +2503,7 @@ function App() {
                 />
               </label>
               <button className="primary-button" type="submit" disabled={isCreatingEmployee}>
-                {isCreatingEmployee ? 'Creating Employee...' : 'Create Employee Login'}
+                {isCreatingEmployee ? 'Creating User...' : `Create ${employeeForm.role === 'admin' ? 'Administrator' : 'Employee'} Login`}
               </button>
               <button className="secondary-button" type="button" onClick={repairEmployee} disabled={isCreatingEmployee}>
                 Repair Existing Employee Login
@@ -2502,7 +2532,14 @@ function App() {
                       <strong>{user.display_name || user.email}</strong>
                       <span>{user.email}</span>
                     </div>
-                    <span className={`role-badge ${user.role}`}>{user.role}</span>
+                    <div className="farm-user-role-actions">
+                      <span className={`role-badge ${user.role}`}>{user.role}</span>
+                      {user.role === 'employee' && (
+                        <button type="button" onClick={() => promoteUser(user)}>
+                          Promote to Admin
+                        </button>
+                      )}
+                    </div>
                   </article>
                 ))
               )}

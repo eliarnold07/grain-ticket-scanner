@@ -178,7 +178,16 @@ export async function recordWeeklySummaryDelivery(input) {
   return rows[0];
 }
 
-async function attachEmployeeToFarm(user, { farmId, displayName, email }) {
+function normalizeFarmRole(value) {
+  const role = clean(value).toLowerCase();
+  if (!['admin', 'employee'].includes(role)) {
+    throw new Error('Role must be admin or employee.');
+  }
+  return role;
+}
+
+async function attachUserToFarm(user, { farmId, displayName, email, role }) {
+  const farmRole = normalizeFarmRole(role);
   const memberships = await db(
     `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${user.id}&limit=1`
   );
@@ -194,7 +203,7 @@ async function attachEmployeeToFarm(user, { farmId, displayName, email }) {
       app_metadata: {
         ...(user.app_metadata || {}),
         farm_id: farmId,
-        farm_role: 'employee'
+        farm_role: farmRole
       },
       user_metadata: {
         ...(user.user_metadata || {}),
@@ -213,7 +222,7 @@ async function attachEmployeeToFarm(user, { farmId, displayName, email }) {
     body: {
       user_id: user.id,
       farm_id: farmId,
-      role: 'employee',
+      role: farmRole,
       display_name: displayName,
       email,
       updated_at: new Date().toISOString()
@@ -221,8 +230,8 @@ async function attachEmployeeToFarm(user, { farmId, displayName, email }) {
   });
   const attached = rows[0];
 
-  if (!attached || attached.farm_id !== farmId || attached.role !== 'employee') {
-    throw new Error('Employee login was created, but its farm membership could not be verified.');
+  if (!attached || attached.farm_id !== farmId || attached.role !== farmRole) {
+    throw new Error('User login was created, but its farm membership could not be verified.');
   }
 
   if (orphanFarmId) {
@@ -254,18 +263,19 @@ async function farmHasOperationalData(farmId) {
   return results.some((rows) => rows.length > 0);
 }
 
-export async function createEmployeeAccount(input) {
+export async function createFarmUserAccount(input) {
   const { farmId, role } = context();
-  if (role !== 'admin') throw new Error('Only farm admins can create employee accounts.');
-  if (!supabaseServiceRoleKey) throw new Error('Employee creation requires SUPABASE_SERVICE_ROLE_KEY.');
+  if (role !== 'admin') throw new Error('Only farm admins can create user accounts.');
+  if (!supabaseServiceRoleKey) throw new Error('User creation requires SUPABASE_SERVICE_ROLE_KEY.');
 
   const email = clean(input.email).toLowerCase();
   const password = String(input.password || '');
   const displayName = clean(input.display_name);
+  const farmRole = normalizeFarmRole(input.role || 'employee');
 
-  if (!email) throw new Error('Employee email is required.');
-  if (!displayName) throw new Error('Employee name is required.');
-  if (password.length < 8) throw new Error('Employee password must be at least 8 characters.');
+  if (!email) throw new Error('User email is required.');
+  if (!displayName) throw new Error('User name is required.');
+  if (password.length < 8) throw new Error('User password must be at least 8 characters.');
 
   const created = await rawRequest('/auth/v1/admin/users', {
     method: 'POST',
@@ -279,16 +289,57 @@ export async function createEmployeeAccount(input) {
       },
       app_metadata: {
         farm_id: farmId,
-        farm_role: 'employee'
+        farm_role: farmRole
       }
     }
   });
 
-  return attachEmployeeToFarm(created, {
+  return attachUserToFarm(created, {
     farmId,
     displayName,
-    email
+    email,
+    role: farmRole
   });
+}
+
+export async function updateFarmUserRole(userId, requestedRole) {
+  const { farmId, role } = context();
+  if (role !== 'admin') throw new Error('Only farm admins can change user roles.');
+  if (!supabaseServiceRoleKey) throw new Error('Role changes require SUPABASE_SERVICE_ROLE_KEY.');
+
+  const farmRole = normalizeFarmRole(requestedRole);
+  const memberships = await db(
+    `farm_accounts?select=user_id,farm_id,role,display_name,email&user_id=eq.${userId}&farm_id=eq.${farmId}&limit=1`
+  );
+  const membership = memberships[0];
+  if (!membership) throw new Error('Farm user not found.');
+  if (membership.role === farmRole) return membership;
+
+  const user = await findAuthUserByEmail(clean(membership.email).toLowerCase());
+  if (!user || user.id !== userId) throw new Error('The matching login could not be found.');
+
+  await rawRequest(`/auth/v1/admin/users/${userId}`, {
+    method: 'PUT',
+    serviceRole: true,
+    body: {
+      app_metadata: {
+        ...(user.app_metadata || {}),
+        farm_id: farmId,
+        farm_role: farmRole
+      }
+    }
+  });
+
+  const rows = await db(`farm_accounts?user_id=eq.${userId}&farm_id=eq.${farmId}`, {
+    method: 'PATCH',
+    prefer: 'return=representation',
+    body: {
+      role: farmRole,
+      updated_at: new Date().toISOString()
+    }
+  });
+  if (!rows[0]) throw new Error('The user role could not be updated.');
+  return rows[0];
 }
 
 export async function repairEmployeeAccount(input) {
@@ -320,10 +371,11 @@ export async function repairEmployeeAccount(input) {
     }
   }
 
-  return attachEmployeeToFarm(user, {
+  return attachUserToFarm(user, {
     farmId,
     displayName,
-    email
+    email,
+    role: 'employee'
   });
 }
 

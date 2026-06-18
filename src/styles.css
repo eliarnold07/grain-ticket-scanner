@@ -653,6 +653,23 @@ h2 {
   min-width: 0;
 }
 
+.farm-user-row .farm-user-role-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.farm-user-role-actions button {
+  min-height: 34px;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #265d3a;
+  color: #ffffff;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .farm-user-row span {
   overflow: hidden;
   color: #647065;
