@@ -176,7 +176,7 @@ For a direct security check, copy Farm A's access token from browser storage and
 5. Confirm the employee opens directly to Scanner and has no admin navigation.
 6. Scan and submit a ticket as the employee.
 7. Return to the administrator session and open **Ticket History**.
-8. Confirm the ticket appears and the **Scanned By** column shows the employee.
+8. Confirm the ticket appears in the farm's ticket history.
 9. While signed in as the employee, request an admin API such as `/api/bins`; it should return HTTP 403.
 10. Repeat with a second farm and confirm neither farm can read the other's records.
 

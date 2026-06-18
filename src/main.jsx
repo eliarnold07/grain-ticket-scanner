@@ -324,7 +324,6 @@ function App() {
     crop: '',
     ticket_number: '',
     elevator: '',
-    scanned_by: '',
     assignment_status: '',
     payment_status: ''
   });
@@ -984,7 +983,6 @@ function App() {
       ['Delivered To', 'delivered_to'], ['Gross Weight', 'gross_weight'], ['Tare Weight', 'tare_weight'],
       ['Net Weight', 'net_weight'], ['Bushels', 'bushels'], ['Moisture', 'moisture'], ['Price', 'price'],
       ['Revenue', 'revenue'], ['Hauled By', 'hauled_by'], ['Notes', 'notes'], ['Assignment Status', 'assignment_status'],
-      ['Scanned By', 'scanned_by_name'],
       ['Payment Status', 'payment_status'], ['Payment Date', 'payment_date'], ['Amount Received', 'amount_received'],
       ['Payment Reference', 'payment_reference'], ['Payment Notes', 'payment_notes']
     ];
@@ -1268,7 +1266,6 @@ function App() {
       crop: '',
       ticket_number: '',
       elevator: '',
-      scanned_by: '',
       assignment_status: '',
       payment_status: ''
     });
@@ -1977,7 +1974,7 @@ function App() {
                 type="text"
                 value={historyFilters.search}
                 onChange={(event) => updateHistoryFilter('search', event.target.value)}
-                placeholder="Ticket, bin, hauler, scanner, notes"
+                placeholder="Ticket, bin, hauler, notes"
               />
             </label>
             <label className="field">
@@ -2013,15 +2010,6 @@ function App() {
                 value={historyFilters.elevator}
                 onChange={(event) => updateHistoryFilter('elevator', event.target.value)}
                 placeholder="Rock Port"
-              />
-            </label>
-            <label className="field">
-              <span>Scanned By</span>
-              <input
-                type="text"
-                value={historyFilters.scanned_by}
-                onChange={(event) => updateHistoryFilter('scanned_by', event.target.value)}
-                placeholder="Employee name"
               />
             </label>
             <label className="field">
@@ -2174,7 +2162,7 @@ function App() {
                       ['ticket_number', 'Ticket'], ['date', 'Date'], ['crop', 'Crop'], ['hauled_from', 'Hauled From'],
                       ['delivered_to', 'Delivered To'], ['bushels', 'Bushels'], ['moisture', 'Moisture'], ['price', 'Price'],
                       ['revenue', 'Revenue'], ['hauled_by', 'Hauled By'],
-                      ['scanned_by_name', 'Scanned By'], ['assignment_status', 'Assignment'], ['payment_status', 'Payment']
+                      ['assignment_status', 'Assignment'], ['payment_status', 'Payment']
                     ].map(([key, label]) => (
                       <th key={key}><button type="button" onClick={() => toggleHistorySort(key)}>{label}</button></th>
                     ))}
@@ -2194,7 +2182,6 @@ function App() {
                       <td>{formatCurrency(log.price)}</td>
                       <td>{formatCurrency(log.revenue)}</td>
                       <td>{displayValue(log.hauled_by)}</td>
-                      <td>{displayValue(log.scanned_by_name)}</td>
                       <td><span className={`status-tag ${(log.assignment_status || 'Unassigned').toLowerCase()}`}>{log.assignment_status || 'Unassigned'}</span></td>
                       <td>
                         <button
