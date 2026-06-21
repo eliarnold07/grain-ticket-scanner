@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#174b35">
+  <meta name="description" content="Interactive BinFlow product demo using fictional farm data.">
+  <title>BinFlow — Interactive Product Demo</title>
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <div class="demo-ribbon">
+    <strong>Interactive product demo</strong>
+    <span>Fictional data · Isolated from production · Resets on refresh</span>
+    <button id="tourButton" type="button">Take the 60-second tour</button>
+  </div>
+
+  <header class="app-header">
+    <a class="brand" href="#dashboard" aria-label="BinFlow demo home">
+      <span class="brand-mark">BF</span>
+      <span><strong>BinFlow</strong><small>Grain operations, without the guesswork.</small></span>
+    </a>
+    <div class="account">
+      <span><strong>Prairie Ridge Farms</strong><small>Alex Morgan · Administrator</small></span>
+      <span class="live-pill">Demo workspace</span>
+    </div>
+  </header>
+
+  <nav class="view-tabs" aria-label="Demo views">
+    <button class="active" data-view="dashboard">Dashboard</button>
+    <button data-view="scanner">Scan Ticket</button>
+    <button data-view="history">Ticket History</button>
+    <button data-view="inventory">Inventory</button>
+    <button data-view="contracts">Contracts</button>
+    <button data-view="users">Users</button>
+  </nav>
+
+  <main>
+    <section class="view active" id="dashboard">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Sunday, June 21 · Prairie Ridge Farms</p>
+          <h1>Know where every bushel stands.</h1>
+          <p>One live operating picture across tickets, bins, contracts, and payments.</p>
+        </div>
+        <div class="hero-actions">
+          <button data-go="scanner">Scan New Ticket</button>
+          <button class="secondary" data-go="history">Review Tickets</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid" id="kpiGrid"></div>
+
+      <section class="card">
+        <div class="section-head"><div><h2>Sales and Payments</h2><p>Delivered grain that still needs assignment or reconciliation.</p></div><button data-go="history">Review Tickets</button></div>
+        <div class="finance-grid" id="financeGrid"></div>
+      </section>
+
+      <div class="two-column">
+        <section class="card">
+          <div class="section-head"><div><h2>Inventory by Crop</h2><p>Current bushels by commodity.</p></div></div>
+          <div id="cropChart"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><div><h2>Storage Utilization</h2><p>Estimated capacity used across active bins.</p></div></div>
+          <div class="utilization" id="utilization"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="section-head"><div><h2>Bin Overview</h2><p>Current balances and storage risk by bin.</p></div><button data-go="inventory">Open Bins</button></div>
+        <div class="bin-grid" id="dashboardBins"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head"><div><p class="eyebrow">Sunday to Sunday</p><h2>Weekly Grain Summary</h2><p>Jun 14, 2026, 12:00 PM to Jun 21, 2026, 12:00 PM Eastern</p></div><span class="schedule-pill">Emailed Sundays at noon ET</span></div>
+        <div class="summary-grid">
+          <article><span>Ticket bushels</span><strong>18,942.55 bu</strong><small>7 ticket entries</small></article>
+          <article><span>Manually added</span><strong class="positive">+4,250 bu</strong><small>2 adjustments</small></article>
+          <article><span>Manually removed</span><strong class="negative">−625 bu</strong><small>1 adjustment</small></article>
+          <article><span>Net manual movement</span><strong>+3,625 bu</strong><small>3 adjustments</small></article>
+        </div>
+      </section>
+    </section>
+
+    <section class="view" id="scanner">
+      <div class="page-title"><div><p class="eyebrow">AI-assisted workflow</p><h1>Scan a grain ticket</h1><p>Upload a ticket, review extracted fields, and post it to inventory in under a minute.</p></div></div>
+      <div class="scanner-layout">
+        <section class="card upload-card">
+          <div class="ticket-paper" id="ticketPreview">
+            <strong>RIVERBEND GRAIN CO.</strong><span>Scale Ticket #RB-10482</span>
+            <hr><span>Commodity: YELLOW CORN</span><span>Net Weight: 157,440 lb</span><span>Net Bushels: 2,811.43</span><span>Moisture: 15.2%</span>
+          </div>
+          <button id="extractButton" type="button">Extract Ticket Data</button>
+          <small>Demo simulation — no image is uploaded anywhere.</small>
+        </section>
+        <form class="card form-card" id="ticketForm">
+          <div class="section-head"><div><h2>Review Ticket Data</h2><p id="scanStatus">Sample ticket ready to extract.</p></div></div>
+          <div class="form-grid">
+            <label>Ticket number<input name="ticket_number" value=""></label>
+            <label>Date<input name="date" value=""></label>
+            <label>Commodity<select name="crop"><option>Corn</option><option>Soybeans</option></select></label>
+            <label>Hauled From<select name="hauled_from" id="sourceBin"></select></label>
+            <label>Delivered To<input name="delivered_to" value=""></label>
+            <label>Bushels<input name="bushels" inputmode="decimal" value=""></label>
+            <label>Hauled By<select name="hauled_by"><option>Jordan Lee</option><option>Sam Rivera</option><option>Morgan Tate</option></select></label>
+            <label>Moisture<input name="moisture" value=""></label>
+          </div>
+          <fieldset><legend>Sale Type</legend><div class="segmented"><button class="active" type="button" data-sale="Spot">Spot</button><button type="button" data-sale="Contract">Contract</button></div></fieldset>
+          <label id="contractPicker" hidden>Apply to Contract<select name="contract_id" id="scannerContract"></select></label>
+          <button class="primary-wide" type="submit">Submit Reviewed Ticket</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="view" id="history">
+      <div class="page-title"><div><p class="eyebrow">Reconciliation</p><h1>Ticket History</h1><p>Search, review, and reconcile every delivered load.</p></div><button id="exportButton">Export CSV</button></div>
+      <section class="card">
+        <div class="filters"><label>Search<input id="historySearch" placeholder="Ticket, bin, hauler, notes"></label><label>Assignment<select id="assignmentFilter"><option value="">All assignments</option><option>Spot</option><option>Contract</option></select></label><label>Payment<select id="paymentFilter"><option value="">All payments</option><option>Not paid</option><option>Paid</option></select></label></div>
+        <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Date</th><th>Crop</th><th>Hauled From</th><th>Delivered To</th><th>Bushels</th><th>Assignment</th><th>Payment</th><th></th></tr></thead><tbody id="ticketRows"></tbody></table></div>
+      </section>
+    </section>
+
+    <section class="view" id="inventory">
+      <div class="page-title"><div><p class="eyebrow">Live storage position</p><h1>Grain Inventory</h1><p>Monitor bin balances, capacity, and recent movement.</p></div><button id="adjustButton">Record Adjustment</button></div>
+      <div class="bin-grid inventory-grid" id="inventoryBins"></div>
+    </section>
+
+    <section class="view" id="contracts">
+      <div class="page-title"><div><p class="eyebrow">Sales commitments</p><h1>Grain Contracts</h1><p>Track delivery progress and remaining contracted bushels.</p></div><button id="newContractButton">Add Contract</button></div>
+      <div class="contract-grid" id="contractGrid"></div>
+    </section>
+
+    <section class="view" id="users">
+      <div class="page-title"><div><p class="eyebrow">Farm access</p><h1>Users</h1><p>Administrators manage the farm. Employees scan and submit tickets.</p></div></div>
+      <div class="two-column users-layout">
+        <form class="card form-card" id="userForm"><h2>Add Farm User</h2><label>Name<input name="name" required placeholder="Taylor Brooks"></label><label>Role<select name="role"><option value="employee">Employee — ticket scanner only</option><option value="admin">Administrator — full farm access</option></select></label><label>Email<input name="email" type="email" required placeholder="taylor@example.com"></label><button type="submit">Create Demo User</button></form>
+        <section class="card"><div class="section-head"><div><h2>Current Users</h2><p>People attached to Prairie Ridge Farms.</p></div></div><div id="userList"></div></section>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status"></div>
+  <div class="modal-backdrop" id="modal" hidden><div class="modal"><button class="modal-close" aria-label="Close">×</button><p class="eyebrow">Product walkthrough</p><h2 id="tourTitle"></h2><p id="tourCopy"></p><div class="tour-progress" id="tourProgress"></div><div class="modal-actions"><button class="secondary" id="tourSkip">Exit tour</button><button id="tourNext">Next</button></div></div></div>
+  <script src="demo.js"></script>
+</body>
+</html>
