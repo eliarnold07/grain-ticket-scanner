@@ -36,7 +36,7 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           node -e "if (!process.env.VITE_SUPABASE_URL?.trim() || !process.env.VITE_SUPABASE_ANON_KEY?.trim()) process.exit(1)"
-          npm run build -- --base=/grain-ticket-scanner/
+          npm run build -- --base=/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

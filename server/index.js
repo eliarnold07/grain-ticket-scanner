@@ -56,7 +56,17 @@ const upload = multer({
 });
 
 const port = process.env.PORT || 3001;
-const allowedOrigin = process.env.CORS_ORIGIN || '*';
+const configuredOrigins = String(process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set([
+  ...configuredOrigins,
+  'https://getbinflow.com',
+  'https://www.getbinflow.com',
+  'https://eliarnold07.github.io',
+  'http://localhost:5173'
+]);
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -84,7 +94,16 @@ const defaultDropdownValues = {
   bins: ['Field']
 };
 
-app.use(cors({ origin: allowedOrigin }));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('This website is not allowed to access the BinFlow API.'));
+  }
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', requireSupabaseAuth);
 

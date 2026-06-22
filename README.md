@@ -81,7 +81,8 @@ For local development, the backend can reuse `VITE_SUPABASE_URL` and
 Render should still use the explicit backend variable names.
 
 `RESEND_FROM_EMAIL` must use a sender domain verified in Resend. `BINFLOW_APP_URL`
-is the Netlify URL linked from each weekly summary email.
+is the production URL linked from each weekly summary email. `CORS_ORIGIN` accepts
+a comma-separated list when multiple frontend addresses are active during a migration.
 
 Frontend, locally and on Netlify:
 
@@ -130,9 +131,9 @@ SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 RESEND_API_KEY
 RESEND_FROM_EMAIL=BinFlow <summaries@your-domain.com>
-BINFLOW_APP_URL=https://your-netlify-site.netlify.app
+BINFLOW_APP_URL=https://getbinflow.com
 WEEKLY_SUMMARY_CRON_SECRET=generate_a_long_random_secret
-CORS_ORIGIN=https://your-netlify-site.netlify.app
+CORS_ORIGIN=https://getbinflow.com,https://www.getbinflow.com,https://eliarnold07.github.io
 ```
 
 No Google credentials or local database files are required.
