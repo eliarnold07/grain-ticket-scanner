@@ -31,7 +31,7 @@ jobs:
       - run: npm test
       - name: Build production app
         env:
-          VITE_API_URL: https://binflow-api.onrender.com
+          VITE_API_URL: https://api.getbinflow.com
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |

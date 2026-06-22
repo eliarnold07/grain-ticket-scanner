@@ -143,7 +143,7 @@ No Google credentials or local database files are required.
 Netlify uses `netlify.toml`. Add:
 
 ```text
-VITE_API_URL=https://your-render-service.onrender.com
+VITE_API_URL=https://api.getbinflow.com
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_publishable_or_anon_key
 ```
