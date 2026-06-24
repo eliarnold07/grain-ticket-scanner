@@ -1221,12 +1221,15 @@ function App() {
         throw new Error(await readErrorResponse(response));
       }
 
+      const result = await response.json();
       setTransactionForms((current) => ({
         ...current,
         [binId]: blankTransactionForm
       }));
       await Promise.all([loadBins(), loadDropdowns({ silent: true }), loadDashboard({ silent: true })]);
-      setStatus('Inventory transaction saved.');
+      setStatus(result.capacity_capped
+        ? 'Inventory transaction saved. Bin balance was capped at its capacity.'
+        : 'Inventory transaction saved.');
     } catch (error) {
       setStatus(cleanMessage(error));
     }

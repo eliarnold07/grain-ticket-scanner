@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
 
 const requestContext = new AsyncLocalStorage();
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -381,7 +382,7 @@ export async function repairEmployeeAccount(input) {
 
 function publicBin(bin, transactions = []) {
   const capacity = numeric(bin.estimated_capacity_bushels);
-  const current = Math.max(0, numeric(bin.current_bushels));
+  const current = clampBinBalance(bin.current_bushels, capacity);
 
   return {
     ...bin,
@@ -414,6 +415,8 @@ export async function listBins() {
 export async function createBin(input) {
   const { farmId } = context();
   const now = new Date().toISOString();
+  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
+  const current = clampBinBalance(input.current_bushels, capacity);
   const rows = await db('bins', {
     method: 'POST',
     prefer: 'return=representation',
@@ -421,8 +424,8 @@ export async function createBin(input) {
       farm_id: farmId,
       bin_name: clean(input.bin_name),
       crop_type: clean(input.crop_type),
-      estimated_capacity_bushels: numeric(input.estimated_capacity_bushels),
-      current_bushels: Math.max(0, numeric(input.current_bushels)),
+      estimated_capacity_bushels: capacity,
+      current_bushels: current,
       notes: clean(input.notes),
       created_at: now,
       updated_at: now
@@ -452,18 +455,21 @@ export async function createBin(input) {
 
 export async function updateBin(id, input) {
   const { farmId } = context();
+  const existing = await getBin(id);
+  if (!existing) throw new Error('Bin not found.');
+  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
   const rows = await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, {
     method: 'PATCH',
     prefer: 'return=representation',
     body: {
       bin_name: clean(input.bin_name),
       crop_type: clean(input.crop_type),
-      estimated_capacity_bushels: numeric(input.estimated_capacity_bushels),
+      estimated_capacity_bushels: capacity,
+      current_bushels: clampBinBalance(existing.current_bushels, capacity),
       notes: clean(input.notes),
       updated_at: new Date().toISOString()
     }
   });
-  if (!rows[0]) throw new Error('Bin not found.');
   return publicBin(rows[0]);
 }
 
@@ -490,13 +496,13 @@ export async function createInventoryTransaction(input) {
   if (!bin) throw new Error('Bin not found.');
 
   const type = clean(input.transaction_type).toUpperCase();
-  const amount = numeric(input.bushel_amount);
-  const previous = Math.max(0, numeric(bin.current_bushels));
-  let next = previous;
-  if (type === 'ADD_GRAIN') next = previous + amount;
-  if (type === 'REMOVE_GRAIN' || type === 'TICKET_SALE') next = Math.max(0, previous - amount);
-  if (type === 'MANUAL_ADJUSTMENT') next = Math.max(0, amount);
-  const applied = ['REMOVE_GRAIN', 'TICKET_SALE'].includes(type) ? Math.min(previous, amount) : amount;
+  const result = applyBinTransaction({
+    previousBalance: bin.current_bushels,
+    capacity: bin.estimated_capacity_bushels,
+    type,
+    amount: input.bushel_amount
+  });
+  const { requested: amount, previous, next, appliedAmount: applied } = result;
 
   const transactionRows = await db('inventory_transactions', {
     method: 'POST',
@@ -521,7 +527,11 @@ export async function createInventoryTransaction(input) {
     prefer: 'return=representation',
     body: { current_bushels: next, updated_at: new Date().toISOString() }
   });
-  return { bin: publicBin(binRows[0]), transaction: transactionRows[0] };
+  return {
+    bin: publicBin(binRows[0]),
+    transaction: transactionRows[0],
+    capacity_capped: result.capacityCapped
+  };
 }
 
 export async function createTicketSaleTransaction({ binName, bushels, cropType, ticketId, notes, allowOverdraw = false }) {
@@ -553,16 +563,23 @@ export async function createTicketSaleTransaction({ binName, bushels, cropType, 
 
 async function recalculateBin(binId) {
   const { farmId } = context();
+  const bin = await getBin(binId);
+  if (!bin) return;
+  const capacity = numeric(bin.estimated_capacity_bushels);
   const transactions = await db(`inventory_transactions?select=*&farm_id=eq.${farmId}&bin_id=eq.${binId}&order=created_at.asc`);
   let balance = 0;
 
   for (const transaction of transactions) {
     const previous = balance;
-    if (transaction.transaction_type === 'ADD_GRAIN') balance += numeric(transaction.bushel_amount);
+    if (transaction.transaction_type === 'ADD_GRAIN') {
+      balance = clampBinBalance(balance + numeric(transaction.bushel_amount), capacity);
+    }
     if (['REMOVE_GRAIN', 'TICKET_SALE'].includes(transaction.transaction_type)) {
       balance = Math.max(0, balance - numeric(transaction.applied_bushel_amount ?? transaction.bushel_amount));
     }
-    if (transaction.transaction_type === 'MANUAL_ADJUSTMENT') balance = Math.max(0, numeric(transaction.bushel_amount));
+    if (transaction.transaction_type === 'MANUAL_ADJUSTMENT') {
+      balance = clampBinBalance(transaction.bushel_amount, capacity);
+    }
     await db(`inventory_transactions?id=eq.${transaction.id}&farm_id=eq.${farmId}`, {
       method: 'PATCH',
       body: { previous_bin_balance: previous, new_bin_balance: balance }

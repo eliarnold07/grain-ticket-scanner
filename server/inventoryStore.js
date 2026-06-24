@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
 
 const dataDir = path.resolve('data');
 const inventoryFile = path.join(dataDir, 'inventory.json');
@@ -74,7 +75,7 @@ function normalizeCrop(value) {
 
 function publicBin(bin) {
   const capacity = numeric(bin.estimated_capacity_bushels);
-  const current = Math.max(0, numeric(bin.current_bushels));
+  const current = clampBinBalance(bin.current_bushels, capacity);
 
   return {
     ...bin,
@@ -129,12 +130,13 @@ export async function listBins() {
 export async function createBin(input) {
   const store = await readStore();
   const now = new Date().toISOString();
+  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
   const bin = {
     id: randomUUID(),
     bin_name: clean(input.bin_name),
     crop_type: normalizeCrop(input.crop_type),
-    estimated_capacity_bushels: numeric(input.estimated_capacity_bushels),
-    current_bushels: numeric(input.current_bushels),
+    estimated_capacity_bushels: capacity,
+    current_bushels: clampBinBalance(input.current_bushels, capacity),
     notes: clean(input.notes),
     created_at: now,
     updated_at: now
@@ -171,7 +173,8 @@ export async function updateBin(binId, input) {
 
   bin.bin_name = clean(input.bin_name);
   bin.crop_type = normalizeCrop(input.crop_type);
-  bin.estimated_capacity_bushels = numeric(input.estimated_capacity_bushels);
+  bin.estimated_capacity_bushels = Math.max(0, numeric(input.estimated_capacity_bushels));
+  bin.current_bushels = clampBinBalance(bin.current_bushels, bin.estimated_capacity_bushels);
   bin.notes = clean(input.notes);
   bin.updated_at = new Date().toISOString();
 
@@ -210,25 +213,19 @@ export async function createInventoryTransaction(input) {
     throw new Error('Invalid transaction type.');
   }
 
-  const previousBalance = numeric(bin.current_bushels);
-  const amount = numeric(input.bushel_amount);
-  let newBalance = previousBalance;
-
-  if (type === 'ADD_GRAIN') {
-    newBalance = previousBalance + amount;
-  } else if (type === 'REMOVE_GRAIN' || type === 'TICKET_SALE') {
-    newBalance = Math.max(0, previousBalance - amount);
-  } else if (type === 'MANUAL_ADJUSTMENT') {
-    newBalance = amount;
-  }
+  const result = applyBinTransaction({
+    previousBalance: bin.current_bushels,
+    capacity: bin.estimated_capacity_bushels,
+    type,
+    amount: input.bushel_amount
+  });
+  const { previous: previousBalance, requested: amount, next: newBalance } = result;
 
   const transaction = buildTransaction({
     bin,
     type,
     amount,
-    appliedAmount: type === 'REMOVE_GRAIN' || type === 'TICKET_SALE'
-      ? Math.min(previousBalance, amount)
-      : amount,
+    appliedAmount: result.appliedAmount,
     previousBalance,
     newBalance,
     ticketId: input.ticket_id,
@@ -243,7 +240,8 @@ export async function createInventoryTransaction(input) {
 
   return {
     bin: publicBin(bin),
-    transaction
+    transaction,
+    capacity_capped: result.capacityCapped
   };
 }
 
@@ -315,19 +313,20 @@ export async function deleteInventoryTransaction(transactionId) {
       .filter((item) => item.bin_id === bin.id)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     let balance = 0;
+    const capacity = numeric(bin.estimated_capacity_bushels);
 
     for (const item of remaining) {
       item.previous_bin_balance = balance;
 
       if (item.transaction_type === 'ADD_GRAIN') {
-        balance += numeric(item.bushel_amount);
+        balance = clampBinBalance(balance + numeric(item.bushel_amount), capacity);
       } else if (item.transaction_type === 'REMOVE_GRAIN' || item.transaction_type === 'TICKET_SALE') {
         const appliedAmount = item.applied_bushel_amount === undefined
           ? Math.min(balance, numeric(item.bushel_amount))
           : numeric(item.applied_bushel_amount);
         balance = Math.max(0, balance - appliedAmount);
       } else if (item.transaction_type === 'MANUAL_ADJUSTMENT') {
-        balance = numeric(item.bushel_amount);
+        balance = clampBinBalance(item.bushel_amount, capacity);
       }
 
       item.new_bin_balance = balance;
