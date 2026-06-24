@@ -1556,7 +1556,7 @@ function App() {
           <option value={OTHER_VALUE}>Other</option>
         </select>
         {options.length === 0 && field === 'hauled_by' && (
-          <small className="field-help">Add drivers below to fill this dropdown.</small>
+          <small className="field-help">Admins can add saved drivers under Users and Drivers, or choose Other to type a name.</small>
         )}
         {options.length === 0 && field === 'hauled_from' && (
           <small className="field-help">Create bins in Grain Bins to fill this dropdown.</small>
@@ -1721,12 +1721,13 @@ function App() {
           className={activeView === 'users' ? 'active' : ''}
           aria-current={activeView === 'users' ? 'page' : undefined}
           type="button"
-          onClick={() => {
+        onClick={() => {
             setActiveView('users');
             loadFarmUsers();
+            loadDrivers();
           }}
         >
-          Users
+          Users and Drivers
         </button>
       </nav>}
 
@@ -2446,8 +2447,8 @@ function App() {
       {isAdmin && activeView === 'users' && (
         <section className="users-panel">
           <div className="form-heading">
-            <h2>Farm Users</h2>
-            <p>Add administrators or scanner-only employees and manage who can access this farm.</p>
+            <h2>Users and Drivers</h2>
+            <p>Manage farm access and the saved driver names available while scanning tickets.</p>
           </div>
           {userStatus && <div className="notice">{userStatus}</div>}
 
@@ -2537,6 +2538,35 @@ function App() {
               )}
             </div>
           </div>
+
+          <section className="driver-panel">
+            <div className="form-heading compact-heading">
+              <h3>Drivers</h3>
+              <p>Add or remove names shown in the scanner’s Hauled By dropdown.</p>
+            </div>
+            <form className="quick-add-form" onSubmit={createDriver}>
+              <input
+                type="text"
+                value={newDriverName}
+                onChange={(event) => setNewDriverName(event.target.value)}
+                placeholder="Driver name"
+              />
+              <button type="submit">Add Driver</button>
+            </form>
+            {isLoadingDrivers && <div className="notice">Loading drivers...</div>}
+            {drivers.length === 0 && !isLoadingDrivers ? (
+              <div className="premium-empty">No saved drivers yet. Scanner users can still choose Other and type a name.</div>
+            ) : (
+              <div className="chip-list">
+                {drivers.map((driver) => (
+                  <div className="data-chip" key={driver.id}>
+                    <span>{driver.name}</span>
+                    <button type="button" onClick={() => removeDriver(driver.id)}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </section>
       )}
 
@@ -2590,33 +2620,6 @@ function App() {
           </div>
         )}
       </section>
-
-      {isAdmin && <section className="driver-panel">
-        <div className="form-heading compact-heading">
-          <h2>Drivers</h2>
-          <p>Add driver names here for the Hauled By dropdown.</p>
-        </div>
-        <form className="quick-add-form" onSubmit={createDriver}>
-          <input
-            type="text"
-            value={newDriverName}
-            onChange={(event) => setNewDriverName(event.target.value)}
-            placeholder="Driver name"
-          />
-          <button type="submit">Add Driver</button>
-        </form>
-        {isLoadingDrivers && <div className="notice">Loading drivers...</div>}
-        {drivers.length > 0 && (
-          <div className="chip-list">
-            {drivers.map((driver) => (
-              <div className="data-chip" key={driver.id}>
-                <span>{driver.name}</span>
-                <button type="button" onClick={() => removeDriver(driver.id)}>Remove</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>}
 
       <form className="review-form" onSubmit={submitTicket}>
         <div className="form-heading">
