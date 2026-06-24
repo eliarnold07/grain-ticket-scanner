@@ -1,17 +1,243 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#174b35" />
-    <meta
-      name="description"
-      content="BinFlow grain ticket, inventory, contract, and farm operations management."
-    />
-    <title>BinFlow</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#123f2c">
+  <meta name="description" content="BinFlow landing page concept for grain inventory, ticket scanning, contracts, and farm operations.">
+  <title>BinFlow — Grain Operations Software</title>
+  <link rel="stylesheet" href="/landing-concept/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="BinFlow home">
+      <img class="brand-mark" src="/landing-concept/binflow-mark.png" alt="">
+      <span>
+        <strong>BinFlow</strong>
+        <small>Grain operations software</small>
+      </span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#product">Product</a>
+      <a href="#workflow">Workflow</a>
+      <a href="#demo">Demo</a>
+      <a href="#contact">Contact</a>
+    </nav>
+    <div class="header-actions">
+      <a class="action-pill login-pill" href="/app/">Existing Farm Login</a>
+      <a class="action-pill account-pill" href="/app/?auth=signup">Create Farm Account</a>
+      <a class="button small" href="/demo/">View Public Demo</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Built for farms managing real grain movement</p>
+        <div class="beta-badge"><span></span> Private beta with real farm users.</div>
+        <h1>Track tickets, bins, contracts, and payments without the spreadsheet mess.</h1>
+        <p class="lead">BinFlow is being tested in real farm operations, turning grain tickets into organized records, current inventory, contract balances, and a clear view of what has moved, what is stored, and what still needs paid.</p>
+        <div class="hero-actions">
+          <a class="button" href="/demo/">View Public Demo</a>
+          <a class="action-pill login-pill" href="/app/">Existing Farm Login</a>
+          <a class="action-pill account-pill" href="/app/?auth=signup">Create Farm Account</a>
+        </div>
+        <p class="action-note">The demo uses sample data and requires no account. Farm login is for current customers and their employees.</p>
+        <div class="proof-strip" aria-label="Product highlights">
+          <span><strong>Real farm users</strong> Active private beta</span>
+          <span><strong>OCR ticket capture</strong> Review before saving</span>
+          <span><strong>Multi-farm accounts</strong> Isolated farm-level access</span>
+          <span><strong>Interactive demo</strong> Sample data, no login</span>
+        </div>
+      </div>
+      <div class="hero-card" aria-label="BinFlow dashboard preview">
+        <div class="browser-top">
+          <span></span><span></span><span></span>
+          <small>getbinflow.com</small>
+        </div>
+        <div class="app-preview">
+          <div class="preview-header">
+            <div>
+              <small>Prairie Ridge Farms</small>
+              <strong>Operations Dashboard</strong>
+            </div>
+            <span class="status-pill">Live inventory</span>
+          </div>
+          <div class="metric-grid">
+            <article><span>Corn inventory</span><strong>84,220 bu</strong></article>
+            <article><span>Beans inventory</span><strong>31,460 bu</strong></article>
+            <article><span>Open contracts</span><strong>7</strong></article>
+            <article><span>Unpaid delivered</span><strong>12,840 bu</strong></article>
+          </div>
+          <div class="ticket-row">
+            <div>
+              <small>Ticket #RB-10482</small>
+              <strong>2,811.43 bu corn</strong>
+              <span>Assigned to C-1027 · Contract balance updated</span>
+            </div>
+            <button type="button">Reviewed</button>
+          </div>
+          <div class="bar-card">
+            <div class="bar-label"><span>North Bin 2</span><strong>76%</strong></div>
+            <div class="bar"><span style="width:76%"></span></div>
+          </div>
+          <div class="bar-card">
+            <div class="bar-label"><span>South Bean Bin</span><strong>52%</strong></div>
+            <div class="bar secondary"><span style="width:52%"></span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="logo-row" aria-label="Positioning statement">
+      <strong>Built around real grain workflows</strong>
+      <span>Ticket capture</span>
+      <span>Inventory balances</span>
+      <span>Contract tracking</span>
+      <span>Payment reconciliation</span>
+      <span>Weekly summaries</span>
+    </section>
+
+    <section class="field-photo" aria-label="Grain facility in operation">
+      <img src="/landing-concept/grain-facility-truck.webp" alt="Grain truck moving through an operating grain facility with storage bins">
+      <div class="field-photo-caption">
+        <span class="photo-kicker">Software grounded in the work</span>
+        <strong>Designed around what happens after grain leaves the field.</strong>
+        <p>Tickets, bins, contracts, and payments stay connected through the same real-world workflow.</p>
+      </div>
+    </section>
+
+    <section class="section" id="product">
+      <div class="section-heading">
+        <p class="eyebrow">One workflow instead of five loose records</p>
+        <h2>Everything a farm needs after a truck leaves the scale.</h2>
+        <p>BinFlow focuses on the operational details farms actually need: where grain came from, where it went, which contract it belongs to, and whether payment has been received.</p>
+      </div>
+      <div class="feature-grid">
+        <article>
+          <span class="icon">01</span>
+          <h3>Scan and review tickets</h3>
+          <p>Upload a ticket photo, extract the important fields, then let the user confirm the details before anything is saved.</p>
+        </article>
+        <article>
+          <span class="icon">02</span>
+          <h3>Keep bins current</h3>
+          <p>Inventory updates from tickets and manual adjustments so the dashboard reflects the farm’s actual grain position.</p>
+        </article>
+        <article>
+          <span class="icon">03</span>
+          <h3>Track contract balances</h3>
+          <p>Assign delivered bushels to spot or contract sales, then watch remaining contract balances drop automatically.</p>
+        </article>
+        <article>
+          <span class="icon">04</span>
+          <h3>Control farm access</h3>
+          <p>Admins manage users and employees can scan tickets into the right farm without seeing unrelated farm data.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section workflow" id="workflow">
+      <div class="workflow-copy">
+        <p class="eyebrow">Simple enough for the field, useful enough for the office</p>
+        <h2>From paper ticket to clean farm record.</h2>
+        <p>BinFlow is designed and tested around the way grain actually moves on working farms. Employees can capture the ticket, admins can review and reconcile, and the farm keeps one shared source of truth.</p>
+      </div>
+      <div class="steps">
+        <article>
+          <span>1</span>
+          <div>
+            <h3>Scan the ticket</h3>
+            <p>Capture commodity, bushels, destination, hauler, moisture, and other ticket details.</p>
+          </div>
+        </article>
+        <article>
+          <span>2</span>
+          <div>
+            <h3>Assign the sale</h3>
+            <p>Mark the load as spot or choose the contract it should count against.</p>
+          </div>
+        </article>
+        <article>
+          <span>3</span>
+          <div>
+            <h3>Update inventory</h3>
+            <p>Subtract from the selected bin and keep crop totals current.</p>
+          </div>
+        </article>
+        <article>
+          <span>4</span>
+          <div>
+            <h3>Reconcile payment</h3>
+            <p>Track checks received per ticket and keep unpaid delivered grain visible.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split-card" id="demo">
+      <div>
+        <p class="eyebrow">Safe to share, easy to demo</p>
+        <h2>Demonstrate the product without exposing farm data.</h2>
+        <p>The public demo uses fictional data and runs separately from real farm accounts. It gives operators, consultants, recruiters, and ag-tech professionals a realistic tour without requiring a login.</p>
+      </div>
+      <div class="demo-panel">
+        <span class="panel-label">Public environment</span>
+        <strong>View Public Demo</strong>
+        <p>Sample farm data · No account required · No access to live customer information</p>
+        <a class="button" href="/demo/">Launch Public Demo</a>
+        <a class="panel-login" href="/app/">Current customer? Existing Farm Login</a>
+      </div>
+    </section>
+
+    <section class="section credibility">
+      <div>
+        <p class="eyebrow">Why this matters</p>
+        <h2>Grain records should be accurate before tax time, settlement, or contract disputes.</h2>
+      </div>
+      <div class="quote-card">
+        <p>“The goal is not to replace the farmer’s judgment. It is to make sure every load, bin, contract, and payment is visible before it becomes a problem.”</p>
+        <span>BinFlow product principle</span>
+      </div>
+    </section>
+
+    <section class="final-cta" id="contact">
+      <img class="cta-photo" src="/landing-concept/grain-bins-sunset.png" alt="" aria-hidden="true">
+      <div class="cta-content">
+        <p class="eyebrow">Private beta with real farm users</p>
+        <h2>Built in Indiana for farms that need cleaner grain records.</h2>
+        <p>BinFlow is currently being used and tested in real farm operations across real ticket, inventory, contract, and payment workflows.</p>
+        <div class="hero-actions centered">
+          <details class="contact-menu">
+            <summary class="button">Contact BinFlow</summary>
+            <div class="contact-options">
+              <a href="mailto:eliarnold07@gmail.com">
+                <span>Email</span>
+                <strong>eliarnold07@gmail.com</strong>
+              </a>
+              <a href="tel:+18127893480">
+                <span>Phone</span>
+                <strong>812-789-3480</strong>
+              </a>
+            </div>
+          </details>
+          <a class="action-pill demo-pill" href="/demo/">View Public Demo</a>
+          <a class="action-pill login-pill" href="/app/">Existing Farm Login</a>
+          <a class="action-pill account-pill" href="/app/?auth=signup">Create Farm Account</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand" href="#top" aria-label="BinFlow home">
+      <img class="brand-mark" src="/landing-concept/binflow-mark.png" alt="">
+      <span><strong>BinFlow</strong><small>Grain operations software</small></span>
+    </a>
+    <div class="footer-note">
+      <strong>Built by Eli Arnold, Indiana University Informatics student.</strong>
+      <span>Private beta · Secure farm-level accounts · Public demo uses sample data</span>
+    </div>
+  </footer>
+</body>
 </html>

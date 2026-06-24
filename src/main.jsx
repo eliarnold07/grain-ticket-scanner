@@ -262,7 +262,10 @@ function App() {
   const terminalAuthFailureRef = useRef(false);
   const [farm, setFarm] = useState(null);
   const [account, setAccount] = useState(null);
-  const [authMode, setAuthMode] = useState('login');
+  const [authMode, setAuthMode] = useState(() => {
+    const requestedMode = new URLSearchParams(window.location.search).get('auth');
+    return requestedMode === 'signup' ? 'signup' : 'login';
+  });
   const [authForm, setAuthForm] = useState({ farmName: '', email: '', password: '' });
   const [authStatus, setAuthStatus] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
