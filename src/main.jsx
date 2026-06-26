@@ -315,9 +315,12 @@ function App() {
   const [historySort, setHistorySort] = useState({ field: 'created_at', direction: 'desc' });
   const [bins, setBins] = useState([]);
   const [drivers, setDrivers] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [isLoadingBins, setIsLoadingBins] = useState(false);
   const [isLoadingDrivers, setIsLoadingDrivers] = useState(false);
+  const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [newDriverName, setNewDriverName] = useState('');
+  const [newLocationName, setNewLocationName] = useState('');
   const [binForm, setBinForm] = useState(blankBinForm);
   const [editingBinId, setEditingBinId] = useState('');
   const [transactionForms, setTransactionForms] = useState({});
@@ -425,6 +428,7 @@ function App() {
         loadTicketHistory({ silent: true }),
         loadBins({ silent: true }),
         loadDrivers({ silent: true }),
+        loadLocations({ silent: true }),
         loadContracts({ silent: true }),
         loadFarmUsers({ silent: true })
       ]);
@@ -1074,6 +1078,31 @@ function App() {
     }
   }
 
+  async function loadLocations(options = {}) {
+    if (!options.silent) {
+      setIsLoadingLocations(true);
+    }
+
+    try {
+      const response = await apiFetch('/api/locations');
+
+      if (!response.ok) {
+        throw new Error(await readErrorResponse(response));
+      }
+
+      const data = await response.json();
+      setLocations(data.locations || []);
+    } catch (error) {
+      if (!options.silent) {
+        setStatus(cleanMessage(error));
+      }
+    } finally {
+      if (!options.silent) {
+        setIsLoadingLocations(false);
+      }
+    }
+  }
+
   async function createDriver(event) {
     event.preventDefault();
 
@@ -1110,6 +1139,47 @@ function App() {
 
       await Promise.all([loadDrivers(), loadDropdowns({ silent: true })]);
       setStatus('Driver removed.');
+    } catch (error) {
+      setStatus(cleanMessage(error));
+    }
+  }
+
+  async function createLocation(event) {
+    event.preventDefault();
+
+    try {
+      const response = await apiFetch('/api/locations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: newLocationName })
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorResponse(response));
+      }
+
+      setNewLocationName('');
+      await Promise.all([loadLocations(), loadDropdowns({ silent: true })]);
+      setStatus('Location added.');
+    } catch (error) {
+      setStatus(cleanMessage(error));
+    }
+  }
+
+  async function removeLocation(locationId) {
+    try {
+      const response = await apiFetch(`/api/locations/${locationId}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorResponse(response));
+      }
+
+      await Promise.all([loadLocations(), loadDropdowns({ silent: true })]);
+      setStatus('Location removed.');
     } catch (error) {
       setStatus(cleanMessage(error));
     }
@@ -1556,7 +1626,10 @@ function App() {
           <option value={OTHER_VALUE}>Other</option>
         </select>
         {options.length === 0 && field === 'hauled_by' && (
-          <small className="field-help">Admins can add saved drivers under Users and Drivers, or choose Other to type a name.</small>
+          <small className="field-help">Admins can add saved drivers under Locations, Users, and Drivers, or choose Other to type a name.</small>
+        )}
+        {options.length === 0 && field === 'delivered_to' && (
+          <small className="field-help">Admins can add saved delivery locations under Locations, Users, and Drivers, or choose Other to type a name.</small>
         )}
         {options.length === 0 && field === 'hauled_from' && (
           <small className="field-help">Create bins in Grain Bins to fill this dropdown.</small>
@@ -1721,13 +1794,14 @@ function App() {
           className={activeView === 'users' ? 'active' : ''}
           aria-current={activeView === 'users' ? 'page' : undefined}
           type="button"
-        onClick={() => {
+          onClick={() => {
             setActiveView('users');
             loadFarmUsers();
             loadDrivers();
+            loadLocations();
           }}
         >
-          Users and Drivers
+          Locations, Users, and Drivers
         </button>
       </nav>}
 
@@ -2447,8 +2521,8 @@ function App() {
       {isAdmin && activeView === 'users' && (
         <section className="users-panel">
           <div className="form-heading">
-            <h2>Users and Drivers</h2>
-            <p>Manage farm access and the saved driver names available while scanning tickets.</p>
+            <h2>Locations, Users, and Drivers</h2>
+            <p>Manage farm access, saved delivery locations, and driver names available while scanning tickets.</p>
           </div>
           {userStatus && <div className="notice">{userStatus}</div>}
 
@@ -2541,6 +2615,35 @@ function App() {
 
           <section className="driver-panel">
             <div className="form-heading compact-heading">
+              <h3>Delivery Locations</h3>
+              <p>Add or remove locations shown in the scanner’s Delivered To dropdown.</p>
+            </div>
+            <form className="quick-add-form" onSubmit={createLocation}>
+              <input
+                type="text"
+                value={newLocationName}
+                onChange={(event) => setNewLocationName(event.target.value)}
+                placeholder="Location or buyer name"
+              />
+              <button type="submit">Add Location</button>
+            </form>
+            {isLoadingLocations && <div className="notice">Loading locations...</div>}
+            {locations.length === 0 && !isLoadingLocations ? (
+              <div className="premium-empty">No saved locations yet. Scanner users can still choose Other and type a destination.</div>
+            ) : (
+              <div className="chip-list">
+                {locations.map((location) => (
+                  <div className="data-chip" key={location.id}>
+                    <span>{location.name}</span>
+                    <button type="button" onClick={() => removeLocation(location.id)}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="driver-panel">
+            <div className="form-heading compact-heading">
               <h3>Drivers</h3>
               <p>Add or remove names shown in the scanner’s Hauled By dropdown.</p>
             </div>
@@ -2605,7 +2708,7 @@ function App() {
         <p className="status-text">{status}</p>
 
         {isLoadingDropdowns && (
-          <div className="notice">Loading shared bins and drivers...</div>
+          <div className="notice">Loading shared bins, locations, and drivers...</div>
         )}
 
         {dropdowns.missing_tabs.length > 0 && (
@@ -2645,10 +2748,7 @@ function App() {
 
           {renderDropdownField('hauled_from', dropdowns.bins, 'Choose Hauled From')}
 
-          <label className="field">
-            <span>{fieldLabels.delivered_to}</span>
-            <input type="text" value={ticket.delivered_to} onChange={(event) => updateField('delivered_to', event.target.value)} placeholder="Read from ticket or type manually" />
-          </label>
+          {renderDropdownField('delivered_to', dropdowns.destinations, 'Choose Delivered To')}
 
           <label className="field">
             <span>{fieldLabels.bushels}</span>

@@ -10,11 +10,13 @@ import {
   createContract,
   createDriver,
   createFarmUserAccount,
+  createLocation,
   createInventoryTransaction,
   createTicketSaleTransaction,
   deleteBin,
   deleteContract,
   deleteDriver,
+  deleteLocation,
   deleteInventoryTransaction,
   deleteTicketLog,
   deleteTicketLogByInventoryTransactionId,
@@ -23,6 +25,7 @@ import {
   listBins,
   listContracts,
   listDrivers,
+  listLocations,
   listFarmUsers,
   listInventoryTransactions,
   listTicketLogs,
@@ -309,11 +312,12 @@ function uniqueValues(rows) {
 async function getDropdownData() {
   const appBins = (await listBins()).map((bin) => bin.bin_name);
   const appDrivers = (await listDrivers()).map((driver) => driver.name);
+  const appLocations = (await listLocations()).map((location) => location.name);
 
   const payload = {
     bins: uniqueValues([...appBins, ...defaultDropdownValues.bins]),
     haulers: uniqueValues(appDrivers),
-    destinations: [],
+    destinations: uniqueValues(appLocations),
     missing_tabs: [],
     source: 'Supabase farm data'
   };
@@ -659,6 +663,45 @@ app.delete('/api/drivers/:id', async (req, res) => {
     logError('Driver delete failed', error);
     res.status(400).json({
       error: 'Could not delete driver.',
+      detail: error.message
+    });
+  }
+});
+
+app.get('/api/locations', async (_req, res) => {
+  try {
+    const locations = await listLocations();
+    res.json({ locations });
+  } catch (error) {
+    logError('Location fetch failed', error);
+    res.status(500).json({
+      error: 'Could not load locations.',
+      detail: error.message
+    });
+  }
+});
+
+app.post('/api/locations', async (req, res) => {
+  try {
+    const location = await createLocation(req.body || {});
+    res.status(201).json({ location });
+  } catch (error) {
+    logError('Location create failed', error);
+    res.status(400).json({
+      error: 'Could not create location.',
+      detail: error.message
+    });
+  }
+});
+
+app.delete('/api/locations/:id', async (req, res) => {
+  try {
+    await deleteLocation(req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    logError('Location delete failed', error);
+    res.status(400).json({
+      error: 'Could not delete location.',
       detail: error.message
     });
   }

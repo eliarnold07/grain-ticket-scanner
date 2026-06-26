@@ -819,7 +819,9 @@ async function settings() {
 
 export async function listDrivers() {
   const row = await settings();
-  return (row?.drivers || []).sort((a, b) => a.name.localeCompare(b.name));
+  return (row?.drivers || [])
+    .filter((item) => !item.kind || item.kind === 'driver')
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function createDriver(input) {
@@ -828,9 +830,11 @@ export async function createDriver(input) {
   const name = clean(input.name);
   if (!name) throw new Error('Driver name is required.');
   const drivers = row?.drivers || [];
-  const existing = drivers.find((driver) => driver.name.toLowerCase() === name.toLowerCase());
+  const existing = drivers.find((driver) => (
+    (!driver.kind || driver.kind === 'driver') && driver.name.toLowerCase() === name.toLowerCase()
+  ));
   if (existing) return existing;
-  const driver = { id: randomUUID(), name, created_at: new Date().toISOString() };
+  const driver = { id: randomUUID(), name, kind: 'driver', created_at: new Date().toISOString() };
   await db(`farm_settings?farm_id=eq.${farmId}`, {
     method: 'PATCH',
     body: { drivers: [...drivers, driver], updated_at: new Date().toISOString() }
@@ -843,7 +847,52 @@ export async function deleteDriver(id) {
   const row = await settings();
   await db(`farm_settings?farm_id=eq.${farmId}`, {
     method: 'PATCH',
-    body: { drivers: (row?.drivers || []).filter((driver) => driver.id !== id), updated_at: new Date().toISOString() }
+    body: {
+      drivers: (row?.drivers || []).filter((driver) => (
+        driver.id !== id || (driver.kind && driver.kind !== 'driver')
+      )),
+      updated_at: new Date().toISOString()
+    }
+  });
+  return { ok: true };
+}
+
+export async function listLocations() {
+  const row = await settings();
+  return (row?.drivers || [])
+    .filter((item) => item.kind === 'location')
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function createLocation(input) {
+  const { farmId } = context();
+  const row = await settings();
+  const name = clean(input.name);
+  if (!name) throw new Error('Location name is required.');
+  const drivers = row?.drivers || [];
+  const existing = drivers.find((location) => (
+    location.kind === 'location' && location.name.toLowerCase() === name.toLowerCase()
+  ));
+  if (existing) return existing;
+  const location = { id: randomUUID(), name, kind: 'location', created_at: new Date().toISOString() };
+  await db(`farm_settings?farm_id=eq.${farmId}`, {
+    method: 'PATCH',
+    body: { drivers: [...drivers, location], updated_at: new Date().toISOString() }
+  });
+  return location;
+}
+
+export async function deleteLocation(id) {
+  const { farmId } = context();
+  const row = await settings();
+  await db(`farm_settings?farm_id=eq.${farmId}`, {
+    method: 'PATCH',
+    body: {
+      drivers: (row?.drivers || []).filter((location) => (
+        location.id !== id || location.kind !== 'location'
+      )),
+      updated_at: new Date().toISOString()
+    }
   });
   return { ok: true };
 }

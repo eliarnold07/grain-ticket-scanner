@@ -45,7 +45,7 @@
     <button data-view="history">Ticket History</button>
     <button data-view="inventory">Inventory</button>
     <button data-view="contracts">Contracts</button>
-    <button data-view="users">Users and Drivers</button>
+    <button data-view="users">Locations, Users, and Drivers</button>
   </nav>
 
   <main>
@@ -114,7 +114,7 @@
             <label>Date<input name="date" value=""></label>
             <label>Commodity<select name="crop"><option>Corn</option><option>Soybeans</option></select></label>
             <label>Hauled From<select name="hauled_from" id="sourceBin"></select></label>
-            <label>Delivered To<input name="delivered_to" value=""></label>
+            <label>Delivered To<select name="delivered_to" id="demoDeliveredTo"></select><input class="other-input" name="other_destination" id="otherDestination" placeholder="Enter delivery location" hidden></label>
             <label>Bushels<input name="bushels" inputmode="decimal" value=""></label>
             <label>Hauled By<select name="hauled_by" id="demoHauler"></select><input name="other_hauler" id="otherHauler" placeholder="Enter driver name" hidden></label>
             <label>Moisture<input name="moisture" value=""></label>
@@ -145,11 +145,16 @@
     </section>
 
     <section class="view" id="users">
-      <div class="page-title"><div><p class="eyebrow">Farm access and hauling</p><h1>Users and Drivers</h1><p>Manage farm accounts and the driver names available during ticket scanning.</p></div></div>
+      <div class="page-title"><div><p class="eyebrow">Farm access and records</p><h1>Locations, Users, and Drivers</h1><p>Manage farm accounts, delivery locations, and driver names available during ticket scanning.</p></div></div>
       <div class="two-column users-layout">
         <form class="card form-card" id="userForm"><h2>Add Farm User</h2><label>Name<input name="name" required placeholder="Taylor Brooks"></label><label>Role<select name="role"><option value="employee">Employee — ticket scanner only</option><option value="admin">Administrator — full farm access</option></select></label><label>Email<input name="email" type="email" required placeholder="taylor@example.com"></label><button type="submit">Create Demo User</button></form>
         <section class="card"><div class="section-head"><div><h2>Current Users</h2><p>People attached to Prairie Ridge Farms.</p></div></div><div id="userList"></div></section>
       </div>
+      <section class="card">
+        <div class="section-head"><div><h2>Delivery Locations</h2><p>Locations available in the scanner’s Delivered To dropdown.</p></div></div>
+        <form class="quick-add-form" id="locationForm"><input name="name" required placeholder="Location or buyer name"><button type="submit">Add Location</button></form>
+        <div class="chip-list" id="locationList"></div>
+      </section>
       <section class="card">
         <div class="section-head"><div><h2>Drivers</h2><p>Names available in the scanner’s Hauled By dropdown.</p></div></div>
         <form class="quick-add-form" id="driverForm"><input name="name" required placeholder="Driver name"><button type="submit">Add Driver</button></form>
