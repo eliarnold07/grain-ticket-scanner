@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { isArchivedTicket } from './archivePolicy.js';
 import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
 
 const requestContext = new AsyncLocalStorage();
@@ -708,6 +709,9 @@ export async function listTicketLogs(filters = {}) {
   const logs = await getTicketLogSnapshot();
   const search = clean(filters.search).toLowerCase();
   return logs.filter((log) => {
+    const archived = isArchivedTicket(log);
+    if (filters.archive_view === 'archived' && !archived) return false;
+    if (filters.archive_view !== 'archived' && archived) return false;
     if (filters.crop && clean(log.crop).toLowerCase() !== clean(filters.crop).toLowerCase()) return false;
     if (filters.date && !clean(log.date).toLowerCase().includes(clean(filters.date).toLowerCase())) return false;
     if (filters.ticket_number && !clean(log.ticket_number).toLowerCase().includes(clean(filters.ticket_number).toLowerCase())) return false;
@@ -746,13 +750,19 @@ function contractWithBalances(contract, tickets) {
   };
 }
 
-export async function listContracts(ticketLogs = null) {
+export async function listContracts(ticketLogs = null, options = {}) {
   const { farmId } = context();
   const [contracts, tickets] = await Promise.all([
     db(`contracts?select=*&farm_id=eq.${farmId}&order=contract_id.asc`),
     ticketLogs ? Promise.resolve(ticketLogs) : getTicketLogSnapshot()
   ]);
-  return contracts.map((contract) => contractWithBalances(contract, tickets));
+  return contracts
+    .map((contract) => contractWithBalances(contract, tickets))
+    .filter((contract) => {
+      if (options.includeAll) return true;
+      const archived = clean(contract.status).toLowerCase() === 'archived';
+      return options.includeArchived ? archived : !archived;
+    });
 }
 
 export async function createContract(input, ticketLogs = []) {

@@ -256,7 +256,7 @@ async function validateTicketAccounting(input) {
 
   if (contractAssignments.length > 0) {
     const ticketLogs = await getTicketLogSnapshot();
-    const contracts = await listContracts(ticketLogs);
+    const contracts = await listContracts(ticketLogs, { includeAll: true });
     const contractIds = new Set(contracts.map((contract) => contract.id));
 
     if (contractAssignments.some((assignment) => !contractIds.has(assignment.contract_id))) {
@@ -459,6 +459,7 @@ app.get('/api/dashboard', async (_req, res) => {
 app.get('/api/ticket-logs', async (req, res) => {
   try {
     const logs = await listTicketLogs({
+      archive_view: req.query.archive_view,
       search: req.query.search,
       date: req.query.date,
       crop: req.query.crop,
@@ -520,7 +521,9 @@ app.delete('/api/ticket-logs/:id', async (req, res) => {
 app.get('/api/contracts', async (_req, res) => {
   try {
     const ticketLogs = await getTicketLogSnapshot();
-    res.json({ contracts: await listContracts(ticketLogs) });
+    res.json({ contracts: await listContracts(ticketLogs, {
+      includeArchived: String(_req.query.archived || '').toLowerCase() === 'true'
+    }) });
   } catch (error) {
     logError('Contract fetch failed', error);
     res.status(500).json({ error: 'Could not load contracts.', detail: error.message });
@@ -532,7 +535,10 @@ app.get('/api/scanner-contracts', async (_req, res) => {
     const ticketLogs = await getTicketLogSnapshot();
     const contracts = await listContracts(ticketLogs);
     const availableContracts = contracts
-      .filter((contract) => Number(contract.remaining_bushels || 0) > 0 && String(contract.status).toLowerCase() !== 'closed')
+      .filter((contract) => {
+        const status = String(contract.status || '').toLowerCase();
+        return Number(contract.remaining_bushels || 0) > 0 && status !== 'closed' && status !== 'archived';
+      })
       .map((contract) => ({
         id: contract.id,
         contract_id: contract.contract_id,

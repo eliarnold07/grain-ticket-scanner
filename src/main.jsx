@@ -304,6 +304,8 @@ function App() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [ticketLogs, setTicketLogs] = useState([]);
   const [contracts, setContracts] = useState([]);
+  const [showArchivedContracts, setShowArchivedContracts] = useState(false);
+  const [showArchivedTickets, setShowArchivedTickets] = useState(false);
   const [farmUsers, setFarmUsers] = useState([]);
   const [employeeForm, setEmployeeForm] = useState(blankEmployeeForm);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -598,7 +600,7 @@ function App() {
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeView, historyFilters, isAdmin, isAuthReady, isAuthenticated]);
+  }, [activeView, historyFilters, isAdmin, isAuthReady, isAuthenticated, showArchivedTickets]);
 
   async function loadDropdowns(options = {}) {
     if (!options.silent) {
@@ -673,6 +675,9 @@ function App() {
       }
     }
 
+    const archived = options.archived ?? showArchivedTickets;
+    params.set('archive_view', archived ? 'archived' : 'current');
+
     const query = params.toString();
 
     try {
@@ -697,7 +702,8 @@ function App() {
 
   async function loadContracts(options = {}) {
     try {
-      const response = await apiFetch('/api/contracts');
+      const archived = options.archived ?? showArchivedContracts;
+      const response = await apiFetch(`/api/contracts${archived ? '?archived=true' : ''}`);
       if (!response.ok) throw new Error(await readErrorResponse(response));
       const data = await response.json();
       setContracts(data.contracts || []);
@@ -1075,6 +1081,29 @@ function App() {
       if (!options.silent) {
         setIsLoadingDrivers(false);
       }
+    }
+  }
+
+  async function archiveContract(contract) {
+    if (String(contract.status || '').toLowerCase() !== 'closed') {
+      setStatus('Only closed contracts can be archived. Mark the contract Closed first, then archive it.');
+      return;
+    }
+
+    if (!window.confirm(`Archive contract ${contract.contract_id}? It will leave the active contract list but remain available in archived contracts and ticket history.`)) return;
+
+    try {
+      const response = await apiFetch(`/api/contracts/${contract.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...contract, status: 'Archived' })
+      });
+
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
+      setStatus('Contract archived.');
+    } catch (error) {
+      setStatus(cleanMessage(error));
     }
   }
 
@@ -2043,8 +2072,12 @@ function App() {
       {isAdmin && activeView === 'history' && (
         <section className="history-panel">
           <div className="form-heading">
-            <h2>Ticket History</h2>
-            <p>Review saved ticket logs from this development app database.</p>
+            <h2>{showArchivedTickets ? 'Archived Ticket History' : 'Ticket History'}</h2>
+            <p>
+              {showArchivedTickets
+                ? 'Review ticket logs from previous crop years. Ticket history archives automatically after August 31 each year.'
+                : 'Review saved ticket logs for the current crop year. Older tickets are kept in archived history.'}
+            </p>
           </div>
 
           <div className="history-filters">
@@ -2114,6 +2147,16 @@ function App() {
           </div>
 
           <div className="history-actions">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !showArchivedTickets;
+                setShowArchivedTickets(next);
+                loadTicketHistory({ archived: next });
+              }}
+            >
+              {showArchivedTickets ? 'Show Current Ticket History' : 'Show Archived Ticket History'}
+            </button>
             <button type="button" onClick={() => loadTicketHistory()} disabled={isLoadingHistory}>
               {isLoadingHistory ? 'Loading...' : 'Refresh History'}
             </button>
@@ -2125,7 +2168,9 @@ function App() {
             </button>
           </div>
 
-          <div className="history-count">{ticketLogs.length} ticket logs</div>
+          <div className="history-count">
+            {ticketLogs.length} {showArchivedTickets ? 'archived' : 'current'} ticket logs
+          </div>
 
           {editingTicket && (
             <form className="ticket-editor" onSubmit={saveTicketChanges}>
@@ -2293,11 +2338,15 @@ function App() {
       {isAdmin && activeView === 'contracts' && (
         <section className="contracts-panel">
           <div className="form-heading">
-            <h2>Grain Contracts</h2>
-            <p>Track contracted bushels and manually apply delivered tickets as elevator settlements are confirmed.</p>
+            <h2>{showArchivedContracts ? 'Archived Grain Contracts' : 'Grain Contracts'}</h2>
+            <p>
+              {showArchivedContracts
+                ? 'Review archived closed contracts, including contracted bushels, applied bushels, remaining bushels, and price.'
+                : 'Track contracted bushels and archive closed contracts once they are filled and settled.'}
+            </p>
           </div>
 
-          <form className="contract-form" onSubmit={saveContract}>
+          {!showArchivedContracts && <form className="contract-form" onSubmit={saveContract}>
             <div className="field-grid">
               <label className="field">
                 <span>Contract ID</span>
@@ -2333,6 +2382,7 @@ function App() {
                   <option>Open</option>
                   <option>Filled</option>
                   <option>Closed</option>
+                  <option>Archived</option>
                   <option>Cancelled</option>
                 </select>
               </label>
@@ -2345,11 +2395,29 @@ function App() {
               <button type="submit">{editingContractId ? 'Update Contract' : 'Add Contract'}</button>
               {editingContractId && <button type="button" onClick={resetContractForm}>Cancel Edit</button>}
             </div>
-          </form>
+          </form>}
+
+          <div className="history-actions">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !showArchivedContracts;
+                setShowArchivedContracts(next);
+                loadContracts({ archived: next });
+              }}
+            >
+              {showArchivedContracts ? 'Show Active Contracts' : 'Show Archived Contracts'}
+            </button>
+            <button type="button" onClick={() => loadContracts()}>
+              Refresh Contracts
+            </button>
+          </div>
 
           <div className="contract-grid">
             {contracts.length === 0 ? (
-              <div className="premium-empty">No contracts yet. Add the first contract above.</div>
+              <div className="premium-empty">
+                {showArchivedContracts ? 'No archived contracts yet.' : 'No contracts yet. Add the first contract above.'}
+              </div>
             ) : contracts.map((contract) => {
               const progress = contract.contracted_bushels > 0
                 ? Math.min(100, (contract.delivered_applied_bushels / contract.contracted_bushels) * 100)
@@ -2374,6 +2442,9 @@ function App() {
                   <p className="contract-window">{displayValue(contract.delivery_window)} · {displayValue(contract.notes)}</p>
                   <div className="inventory-actions">
                     <button type="button" onClick={() => startEditingContract(contract)}>Edit</button>
+                    {!showArchivedContracts && (
+                      <button type="button" onClick={() => archiveContract(contract)}>Archive Closed Contract</button>
+                    )}
                     <button type="button" onClick={() => removeContract(contract.id)}>Delete</button>
                   </div>
                 </article>
