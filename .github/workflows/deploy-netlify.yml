@@ -1,9 +1,6 @@
 name: Deploy BinFlow to Netlify
 
 on:
-  push:
-    branches:
-      - develop
   workflow_dispatch:
 
 permissions:

@@ -84,7 +84,7 @@ Render should still use the explicit backend variable names.
 is the production URL linked from each weekly summary email. `CORS_ORIGIN` accepts
 a comma-separated list when multiple frontend addresses are active during a migration.
 
-Frontend, locally and on Netlify:
+Frontend, locally and in GitHub Pages builds:
 
 ```text
 VITE_API_URL
@@ -138,9 +138,16 @@ CORS_ORIGIN=https://getbinflow.com,https://www.getbinflow.com,https://eliarnold0
 
 No Google credentials or local database files are required.
 
-## Netlify Frontend
+## Production Frontend
 
-Netlify uses `netlify.toml`. Add:
+`getbinflow.com` is currently served by GitHub Pages from the `develop`
+branch. The production workflow is:
+
+```text
+.github/workflows/deploy-pages.yml
+```
+
+GitHub repository secrets:
 
 ```text
 VITE_API_URL=https://api.getbinflow.com
@@ -148,7 +155,9 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_publishable_or_anon_key
 ```
 
-Redeploy after adding or changing Vite environment variables.
+The Netlify workflow is kept manual-only for legacy/test deploys. Netlify is not
+the current production frontend. See `DEPLOYMENT.md` before changing frontend
+hosting, branch triggers, or DNS.
 
 ## Two-Farm Isolation Test
 
