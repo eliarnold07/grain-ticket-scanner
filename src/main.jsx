@@ -277,6 +277,7 @@ function App() {
     status: 'Spot',
     contractId: ''
   });
+  const [contractOverage, setContractOverage] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
   const [dropdowns, setDropdowns] = useState({
     bins: [],
@@ -1523,6 +1524,10 @@ function App() {
   async function submitTicket(event) {
     event.preventDefault();
 
+    await submitReviewedTicket();
+  }
+
+  async function submitReviewedTicket(overageResolution = null) {
     if (isSubmitting) {
       return;
     }
@@ -1545,28 +1550,75 @@ function App() {
       }
     }
 
+    const ticketBushels = Number(ticket.bushels) || 0;
+    const selectedContract = contracts.find((contract) => contract.id === scannerAssignment.contractId);
+    let assignment = {
+      assignment_status: 'Spot',
+      assignments: [{
+        type: 'SPOT',
+        contract_id: '',
+        bushels: ticketBushels
+      }]
+    };
+
+    if (scannerAssignment.status === 'Contract') {
+      const remainingBushels = Math.max(0, Number(selectedContract?.remaining_bushels) || 0);
+
+      if (selectedContract && ticketBushels > remainingBushels && remainingBushels > 0 && !overageResolution) {
+        setContractOverage({
+          contractId: selectedContract.id,
+          contractLabel: selectedContract.contract_id,
+          buyer: selectedContract.buyer,
+          appliedBushels: remainingBushels,
+          overageBushels: ticketBushels - remainingBushels,
+          destination: 'Spot',
+          contractIdForOverage: ''
+        });
+        setStatus('This load fills the selected contract. Choose where the remaining bushels should go.');
+        return;
+      }
+
+      if (overageResolution) {
+        const overageAssignments = overageResolution.destination === 'Contract'
+          ? [{
+              type: 'CONTRACT',
+              contract_id: overageResolution.contractIdForOverage,
+              bushels: overageResolution.overageBushels
+            }]
+          : [{
+              type: 'SPOT',
+              contract_id: '',
+              bushels: overageResolution.overageBushels
+            }];
+
+        assignment = {
+          assignment_status: 'Split',
+          assignments: [
+            {
+              type: 'CONTRACT',
+              contract_id: overageResolution.contractId,
+              bushels: overageResolution.appliedBushels
+            },
+            ...overageAssignments
+          ]
+        };
+      } else {
+        assignment = {
+          assignment_status: 'Contract',
+          assignments: [{
+            type: 'CONTRACT',
+            contract_id: scannerAssignment.contractId,
+            bushels: ticketBushels
+          }]
+        };
+      }
+    }
+
     setIsSubmitting(true);
     setIsSuccess(false);
     setStatus('Submitting reviewed data...');
 
     try {
-      const assignment = scannerAssignment.status === 'Contract'
-        ? {
-            assignment_status: 'Contract',
-            assignments: [{
-              type: 'CONTRACT',
-              contract_id: scannerAssignment.contractId,
-              bushels: Number(ticket.bushels) || 0
-            }]
-          }
-        : {
-            assignment_status: 'Spot',
-            assignments: [{
-              type: 'SPOT',
-              contract_id: '',
-              bushels: Number(ticket.bushels) || 0
-            }]
-          };
       const sendTicket = (confirmedOverdraw) => apiFetch('/api/submit-ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1609,6 +1661,7 @@ function App() {
       setPreviewUrl('');
       setTicket(emptyTicket());
       setScannerAssignment({ status: 'Spot', contractId: '' });
+      setContractOverage(null);
       setOtherValues({
         delivered_to: '',
         hauled_by: '',
@@ -1636,6 +1689,27 @@ function App() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function submitContractOverage() {
+    if (!contractOverage) return;
+
+    if (contractOverage.destination === 'Contract' && !contractOverage.contractIdForOverage) {
+      setStatus('Choose another contract for the remaining bushels, or send them to spot.');
+      return;
+    }
+
+    const overageContract = contracts.find((contract) => contract.id === contractOverage.contractIdForOverage);
+    if (
+      contractOverage.destination === 'Contract'
+      && overageContract
+      && Number(overageContract.remaining_bushels) < Number(contractOverage.overageBushels)
+    ) {
+      setStatus('That contract does not have enough remaining bushels for this overage.');
+      return;
+    }
+
+    submitReviewedTicket(contractOverage);
   }
 
   function renderDropdownField(field, options, placeholder) {
@@ -2892,6 +2966,93 @@ function App() {
         </button>
       </form>
         </>
+      )}
+
+      {contractOverage && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="contract-overage-modal" role="dialog" aria-modal="true" aria-labelledby="contract-overage-title">
+            <div className="form-heading">
+              <h2 id="contract-overage-title">Contract Filled</h2>
+              <p>
+                This load fills contract {contractOverage.contractLabel}
+                {contractOverage.buyer ? ` for ${contractOverage.buyer}` : ''}. Choose where the remaining bushels should go.
+              </p>
+            </div>
+
+            <div className="overage-summary">
+              <article>
+                <span>Applied to contract</span>
+                <strong>{formatNumber(contractOverage.appliedBushels)} bu</strong>
+              </article>
+              <article>
+                <span>Remaining load</span>
+                <strong>{formatNumber(contractOverage.overageBushels)} bu</strong>
+              </article>
+            </div>
+
+            <fieldset className="sale-assignment">
+              <legend>Remaining bushels</legend>
+              <div className="segmented-control">
+                <button
+                  type="button"
+                  className={contractOverage.destination === 'Spot' ? 'active' : ''}
+                  onClick={() => setContractOverage((current) => ({
+                    ...current,
+                    destination: 'Spot',
+                    contractIdForOverage: ''
+                  }))}
+                >
+                  Spot
+                </button>
+                <button
+                  type="button"
+                  className={contractOverage.destination === 'Contract' ? 'active' : ''}
+                  onClick={() => setContractOverage((current) => ({
+                    ...current,
+                    destination: 'Contract'
+                  }))}
+                >
+                  Another Contract
+                </button>
+              </div>
+
+              {contractOverage.destination === 'Contract' && (
+                <label className="field contract-picker">
+                  <span>Apply remaining bushels to</span>
+                  <select
+                    value={contractOverage.contractIdForOverage}
+                    onChange={(event) => setContractOverage((current) => ({
+                      ...current,
+                      contractIdForOverage: event.target.value
+                    }))}
+                  >
+                    <option value="">Choose another outstanding contract</option>
+                    {outstandingContracts
+                      .filter((contract) => (
+                        contract.id !== contractOverage.contractId
+                        && Number(contract.remaining_bushels) >= Number(contractOverage.overageBushels)
+                      ))
+                      .map((contract) => (
+                        <option key={contract.id} value={contract.id}>
+                          {contract.contract_id} · {contract.buyer} · {formatNumber(contract.remaining_bushels)} bu remaining
+                        </option>
+                      ))}
+                  </select>
+                  <small className="field-help">Only contracts with enough remaining bushels are shown.</small>
+                </label>
+              )}
+            </fieldset>
+
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setContractOverage(null)}>
+                Review Ticket
+              </button>
+              <button type="button" className="primary-button" onClick={submitContractOverage} disabled={isSubmitting}>
+                {isSubmitting ? 'Submitting Ticket...' : 'Submit Split Ticket'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </main>
   );

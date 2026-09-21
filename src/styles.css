@@ -592,6 +592,66 @@ h2 {
   background: #fff2df;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 32, 26, 0.62);
+}
+
+.contract-overage-modal {
+  width: min(100%, 560px);
+  border: 1px solid #d8d2c2;
+  border-radius: 12px;
+  padding: 18px;
+  background: #ffffff;
+  box-shadow: 0 28px 70px rgba(23, 32, 26, 0.28);
+}
+
+.overage-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.overage-summary article {
+  border: 1px solid #ded8c9;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f8faf7;
+}
+
+.overage-summary span {
+  display: block;
+  margin-bottom: 6px;
+  color: #526255;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.overage-summary strong {
+  color: #17201a;
+  font-size: 1.3rem;
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.modal-actions .primary-button,
+.modal-actions .secondary-button {
+  width: 100%;
+  margin-top: 0;
+}
+
 .review-form {
   margin-top: 16px;
 }
