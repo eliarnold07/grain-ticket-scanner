@@ -6,6 +6,24 @@ import {
   weeklySummaryWindow
 } from '../server/weeklySummary.js';
 
+test('summary includes opening estimates and signed corrections exactly once', () => {
+  const created_at = '2026-06-08T12:00:00.000Z';
+  const summary = buildWeeklySummary({
+    periodStart: new Date('2026-06-07T16:00:00.000Z'), periodEnd: new Date('2026-06-14T16:00:00.000Z'),
+    bins: [{ id: 'bin-1', bin_name: 'Test bin' }], tickets: [{ id: 'ticket', crop: 'Corn', bushels: 2000, created_at }],
+    transactions: [
+      { transaction_type: 'OPENING_BALANCE_ESTIMATE', applied_bushel_amount: 20000, crop_type: 'Corn', bin_id: 'bin-1', created_at },
+      { transaction_type: 'ESTIMATE_CORRECTION', applied_bushel_amount: -1000, crop_type: 'Corn', bin_id: 'bin-1', created_at },
+      { transaction_type: 'TICKET_SALE', bushel_amount: 2000, crop_type: 'Corn', bin_id: 'bin-1', created_at }
+    ]
+  });
+  assert.equal(summary.ticket_bushels, 2000);
+  assert.equal(summary.manual_adjustment_count, 2);
+  assert.equal(summary.grain_added_bushels, 20000);
+  assert.equal(summary.grain_removed_bushels, 1000);
+  assert.equal(summary.manual_net_bushels, 19000);
+});
+
 test('weekly window starts Sunday at noon Eastern during daylight saving time', () => {
   const now = new Date('2026-06-12T15:00:00.000Z');
   const window = weeklySummaryWindow(now);

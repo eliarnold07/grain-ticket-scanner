@@ -2327,3 +2327,19 @@ h3 {
     white-space: normal;
   }
 }
+/* Invitation codes and confirmation controls must fit the native narrow viewport. */
+.auth-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.auth-tabs button { min-width: 0; white-space: normal; }
+.join-confirmation { display: grid; gap: 12px; }
+.join-confirmation label { display: flex; align-items: flex-start; gap: 8px; }
+.join-confirmation input { flex: 0 0 auto; width: auto; }
+.farm-invitation { min-width: 0; }
+.farm-invitation input { font-family: monospace; min-width: 0; width: 100%; box-sizing: border-box; }
+.farm-user-role-actions { flex-wrap: wrap; }
+.estimate-label { display: inline-block; color: #197047; font-weight: 600; }
+.auth-card h2 { overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .auth-tabs { grid-template-columns: 1fr; }
+  .farm-user-row { flex-wrap: wrap; }
+  .farm-invitation input { font-size: 14px; }
+}

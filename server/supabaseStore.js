@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
 import { accountDeletionEligibility } from './accountDeletionPolicy.js';
 import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
+import { ESTIMATE_TYPES, hasExplicitEstimate, replayEstimate, resolveOpeningEstimate } from './inventoryEstimate.js';
 
 const requestContext = new AsyncLocalStorage();
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -61,6 +62,26 @@ function serviceDb(path, options = {}) {
   });
 }
 
+export function farmFeatureRpc(name, body) {
+  return serviceDb(`rpc/${name}`, { method: 'POST', body });
+}
+
+export async function authenticateJoinRequest(authorization) {
+  const token = clean(authorization).replace(/^Bearer\s+/i, '');
+  if (!token) { const error = new Error('Authentication required'); error.status = 401; throw error; }
+  try { return await rawRequest('/auth/v1/user', { token }); }
+  catch { const error = new Error('Invalid authentication'); error.status = 401; throw error; }
+}
+
+export function signupInvitedUser(body) {
+  // Normal Supabase signup: retain the project's verification/password policies.
+  return rawRequest('/auth/v1/signup', { method: 'POST', body });
+}
+
+export function isPublicInvitationRequest(req) {
+  return req.method === 'POST' && ['/farm-invites/preview', '/farm-invites/register', '/farm-invites/accept'].includes(req.path);
+}
+
 async function buildContext(accessToken) {
   const user = await rawRequest('/auth/v1/user', { token: accessToken });
   const useServiceRole = Boolean(supabaseServiceRoleKey);
@@ -95,6 +116,7 @@ async function buildContext(accessToken) {
 }
 
 export async function requireSupabaseAuth(req, res, next) {
+  if (isPublicInvitationRequest(req)) return next();
   if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
 
   const token = clean(req.get('authorization')).replace(/^Bearer\s+/i, '');
@@ -187,75 +209,6 @@ function normalizeFarmRole(value) {
     throw new Error('Role must be admin or employee.');
   }
   return role;
-}
-
-async function attachUserToFarm(user, { farmId, displayName, email, role }) {
-  const farmRole = normalizeFarmRole(role);
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${user.id}&limit=1`
-  );
-  const existingMembership = memberships[0];
-  const orphanFarmId = existingMembership?.farm_id && existingMembership.farm_id !== farmId
-    ? existingMembership.farm_id
-    : null;
-
-  await rawRequest(`/auth/v1/admin/users/${user.id}`, {
-    method: 'PUT',
-    serviceRole: true,
-    body: {
-      app_metadata: {
-        ...(user.app_metadata || {}),
-        farm_id: farmId,
-        farm_role: farmRole
-      },
-      user_metadata: {
-        ...(user.user_metadata || {}),
-        display_name: displayName
-      }
-    }
-  });
-
-  if (existingMembership) {
-    await db(`farm_accounts?user_id=eq.${user.id}`, { method: 'DELETE' });
-  }
-
-  const rows = await db('farm_accounts', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      user_id: user.id,
-      farm_id: farmId,
-      role: farmRole,
-      display_name: displayName,
-      email,
-      updated_at: new Date().toISOString()
-    }
-  });
-  const attached = rows[0];
-
-  if (!attached || attached.farm_id !== farmId || attached.role !== farmRole) {
-    throw new Error('User login was created, but its farm membership could not be verified.');
-  }
-
-  if (orphanFarmId) {
-    const remainingMembers = await db(
-      `farm_accounts?select=user_id&farm_id=eq.${orphanFarmId}&limit=1`
-    );
-
-    if (remainingMembers.length === 0) {
-      await db(`farms?id=eq.${orphanFarmId}`, { method: 'DELETE' });
-    }
-  }
-
-  return attached;
-}
-
-async function findAuthUserByEmail(email) {
-  const data = await rawRequest('/auth/v1/admin/users?page=1&per_page=1000', {
-    serviceRole: true
-  });
-
-  return (data?.users || []).find((user) => clean(user.email).toLowerCase() === email);
 }
 
 async function farmHasOperationalData(farmId) {
@@ -361,120 +314,19 @@ export async function deleteCurrentAccount({ confirmEmail } = {}) {
   };
 }
 
-export async function createFarmUserAccount(input) {
-  const { farmId, role } = context();
-  if (role !== 'admin') throw new Error('Only farm admins can create user accounts.');
-  if (!supabaseServiceRoleKey) throw new Error('User creation requires SUPABASE_SERVICE_ROLE_KEY.');
-
-  const email = clean(input.email).toLowerCase();
-  const password = String(input.password || '');
-  const displayName = clean(input.display_name);
-  const farmRole = normalizeFarmRole(input.role || 'employee');
-
-  if (!email) throw new Error('User email is required.');
-  if (!displayName) throw new Error('User name is required.');
-  if (password.length < 8) throw new Error('User password must be at least 8 characters.');
-
-  const created = await rawRequest('/auth/v1/admin/users', {
-    method: 'POST',
-    serviceRole: true,
-    body: {
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        display_name: displayName
-      },
-      app_metadata: {
-        farm_id: farmId,
-        farm_role: farmRole
-      }
-    }
-  });
-
-  return attachUserToFarm(created, {
-    farmId,
-    displayName,
-    email,
-    role: farmRole
-  });
-}
-
 export async function updateFarmUserRole(userId, requestedRole) {
-  const { farmId, role } = context();
+  const { member, role } = context();
   if (role !== 'admin') throw new Error('Only farm admins can change user roles.');
   if (!supabaseServiceRoleKey) throw new Error('Role changes require SUPABASE_SERVICE_ROLE_KEY.');
 
-  const farmRole = normalizeFarmRole(requestedRole);
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email&user_id=eq.${userId}&farm_id=eq.${farmId}&limit=1`
-  );
-  const membership = memberships[0];
-  if (!membership) throw new Error('Farm user not found.');
-  if (membership.role === farmRole) return membership;
-
-  const user = await findAuthUserByEmail(clean(membership.email).toLowerCase());
-  if (!user || user.id !== userId) throw new Error('The matching login could not be found.');
-
-  await rawRequest(`/auth/v1/admin/users/${userId}`, {
-    method: 'PUT',
-    serviceRole: true,
-    body: {
-      app_metadata: {
-        ...(user.app_metadata || {}),
-        farm_id: farmId,
-        farm_role: farmRole
-      }
-    }
-  });
-
-  const rows = await db(`farm_accounts?user_id=eq.${userId}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: {
-      role: farmRole,
-      updated_at: new Date().toISOString()
-    }
-  });
-  if (!rows[0]) throw new Error('The user role could not be updated.');
-  return rows[0];
+  if (process.env.FARM_INVITATIONS_ENABLED !== 'true') throw new Error('Farm membership management is not enabled yet.');
+  return farmFeatureRpc('change_farm_member', { p_actor: member.user_id, p_target: userId, p_role: normalizeFarmRole(requestedRole), p_remove: false });
 }
 
-export async function repairEmployeeAccount(input) {
-  const { farmId, role } = context();
-  if (role !== 'admin') throw new Error('Only farm admins can repair employee accounts.');
-  if (!supabaseServiceRoleKey) throw new Error('Employee repair requires SUPABASE_SERVICE_ROLE_KEY.');
-
-  const email = clean(input.email).toLowerCase();
-  const displayName = clean(input.display_name);
-  if (!email) throw new Error('Employee email is required.');
-  if (!displayName) throw new Error('Employee name is required.');
-
-  const user = await findAuthUserByEmail(email);
-  if (!user) throw new Error('No existing login was found for that email.');
-
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role&user_id=eq.${user.id}&limit=1`
-  );
-  const membership = memberships[0];
-
-  if (membership?.farm_id && membership.farm_id !== farmId) {
-    const otherMembers = await db(
-      `farm_accounts?select=user_id&farm_id=eq.${membership.farm_id}&user_id=neq.${user.id}&limit=1`
-    );
-    const hasData = await farmHasOperationalData(membership.farm_id);
-
-    if (otherMembers.length > 0 || hasData) {
-      throw new Error('That login belongs to an active farm and cannot be reassigned.');
-    }
-  }
-
-  return attachUserToFarm(user, {
-    farmId,
-    displayName,
-    email,
-    role: 'employee'
-  });
+export function removeFarmMember(userId) {
+  const { member, role } = context();
+  if (role !== 'admin' || process.env.FARM_INVITATIONS_ENABLED !== 'true') throw new Error('Farm membership management is not available.');
+  return farmFeatureRpc('change_farm_member', { p_actor: member.user_id, p_target: userId, p_role: null, p_remove: true });
 }
 
 function publicBin(bin, transactions = []) {
@@ -483,6 +335,7 @@ function publicBin(bin, transactions = []) {
 
   return {
     ...bin,
+    inventory_is_estimated: Boolean(bin.inventory_is_estimated) || hasExplicitEstimate(transactions.filter((transaction) => transaction.bin_id === bin.id)),
     estimated_capacity_bushels: capacity,
     current_bushels: current,
     percent_full: capacity > 0 ? Math.min(100, Math.max(0, current / capacity * 100)) : null,
@@ -499,7 +352,7 @@ export async function getInventorySnapshot() {
     db(`bins?select=*&farm_id=eq.${farmId}`),
     db(`inventory_transactions?select=*&farm_id=eq.${farmId}&order=created_at.desc`)
   ]);
-  return { bins: bins.map((bin) => publicBin(bin)), transactions };
+  return { bins: bins.map((bin) => publicBin(bin, transactions)), transactions };
 }
 
 export async function listBins() {
@@ -510,6 +363,15 @@ export async function listBins() {
 }
 
 export async function createBin(input) {
+  if (input.opening_mode) {
+    if (process.env.INVENTORY_ESTIMATES_ENABLED !== 'true') throw new Error('Initial inventory estimates are not enabled yet.');
+    resolveOpeningEstimate({ mode: input.opening_mode, capacity: input.estimated_capacity_bushels, bushels: input.current_bushels, fillPercentage: input.fill_percentage });
+  }
+  if (process.env.INVENTORY_ESTIMATES_ENABLED === 'true') {
+    // Older web clients keep working; their initial balance is explicitly recorded as an estimate.
+    const result = await inventoryCommand('create_bin', { ...input, opening_mode: input.opening_mode || (Number(input.current_bushels) ? 'bushels' : 'empty') });
+    return publicBin(result.bin);
+  }
   const { farmId } = context();
   const now = new Date().toISOString();
   const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
@@ -551,10 +413,15 @@ export async function createBin(input) {
 }
 
 export async function updateBin(id, input) {
+  if (process.env.INVENTORY_ESTIMATES_ENABLED === 'true') {
+    const result = await inventoryCommand('update_bin', { ...input, bin_id: id });
+    return publicBin(result.bin);
+  }
   const { farmId } = context();
   const existing = await getBin(id);
   if (!existing) throw new Error('Bin not found.');
   const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
+  if (capacity <= 0 || capacity < numeric(existing.current_bushels)) throw new Error('Capacity must be positive and at least the current inventory.');
   const rows = await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, {
     method: 'PATCH',
     prefer: 'return=representation',
@@ -571,7 +438,10 @@ export async function updateBin(id, input) {
 }
 
 export async function deleteBin(id) {
+  if (process.env.INVENTORY_ESTIMATES_ENABLED === 'true') return inventoryCommand('delete_bin', { bin_id: id });
   const { farmId } = context();
+  const estimates = await db(`inventory_transactions?select=id&farm_id=eq.${farmId}&bin_id=eq.${id}&transaction_type=in.(OPENING_BALANCE_ESTIMATE,ESTIMATE_CORRECTION)&limit=1`);
+  if (estimates.length) throw new Error('A bin with estimate history cannot be deleted.');
   await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
   return { ok: true };
 }
@@ -588,6 +458,18 @@ async function getBinByName(name) {
 }
 
 export async function createInventoryTransaction(input) {
+  const requestedType = clean(input.transaction_type).toUpperCase();
+  if (!['ADD_GRAIN', 'REMOVE_GRAIN', 'MANUAL_ADJUSTMENT', 'TICKET_SALE', 'ESTIMATE_CORRECTION'].includes(requestedType)) {
+    throw new Error('Use a supported inventory transaction or the initial inventory workflow.');
+  }
+  input = { ...input, transaction_type: requestedType };
+  if (input.transaction_type === 'ESTIMATE_CORRECTION' && process.env.INVENTORY_ESTIMATES_ENABLED !== 'true') {
+    throw new Error('Inventory estimate corrections are not enabled yet.');
+  }
+  if (process.env.INVENTORY_ESTIMATES_ENABLED === 'true') {
+    const result = await inventoryCommand('transaction', input);
+    return { ...result, bin: publicBin(result.bin) };
+  }
   const { farmId } = context();
   const bin = await getBin(input.bin_id);
   if (!bin) throw new Error('Bin not found.');
@@ -645,17 +527,29 @@ export async function createTicketSaleTransaction({ binName, bushels, cropType, 
     throw error;
   }
 
-  if (cropType && cropType !== bin.crop_type) {
+  if (cropType && cropType !== bin.crop_type && process.env.INVENTORY_ESTIMATES_ENABLED !== 'true') {
     await updateBin(bin.id, { ...bin, crop_type: cropType });
   }
 
-  return createInventoryTransaction({
+  try { return await createInventoryTransaction({
     bin_id: bin.id,
     transaction_type: 'TICKET_SALE',
     bushel_amount: amount,
+    allow_overdraw: allowOverdraw,
+    crop_type: cropType,
     ticket_number: ticketId,
     notes
-  });
+  }); } catch (error) {
+    if (error.message.includes('BIN_INVENTORY_OVERDRAW')) {
+      const latest = await getBin(bin.id);
+      error.code = 'BIN_INVENTORY_OVERDRAW';
+      error.binName = bin.bin_name;
+      error.currentBushels = numeric(latest?.current_bushels);
+      error.ticketBushels = amount;
+      error.message = 'This ticket exceeds estimated bin inventory. Continue and set this bin to 0?';
+    }
+    throw error;
+  }
 }
 
 async function recalculateBin(binId) {
@@ -677,6 +571,7 @@ async function recalculateBin(binId) {
     if (transaction.transaction_type === 'MANUAL_ADJUSTMENT') {
       balance = clampBinBalance(transaction.bushel_amount, capacity);
     }
+    if (ESTIMATE_TYPES.has(transaction.transaction_type)) balance = replayEstimate(balance, transaction, capacity);
     await db(`inventory_transactions?id=eq.${transaction.id}&farm_id=eq.${farmId}`, {
       method: 'PATCH',
       body: { previous_bin_balance: previous, new_bin_balance: balance }
@@ -690,13 +585,19 @@ async function recalculateBin(binId) {
 }
 
 export async function deleteInventoryTransaction(id) {
+  if (process.env.INVENTORY_ESTIMATES_ENABLED === 'true') return inventoryCommand('delete_transaction', { id });
   const { farmId } = context();
   const rows = await db(`inventory_transactions?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
   const transaction = rows[0];
   if (!transaction) return { ok: true, deleted: false };
+  if (ESTIMATE_TYPES.has(transaction.transaction_type)) throw new Error('Estimate history cannot be deleted. Save a correction instead.');
   await db(`inventory_transactions?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
   await recalculateBin(transaction.bin_id);
   return { ok: true, deleted: true };
+}
+
+function inventoryCommand(action, input) {
+  return farmFeatureRpc('farm_inventory_command', { p_actor: context().member.user_id, p_action: action, p_input: input });
 }
 
 export async function listInventoryTransactions(filters = {}) {

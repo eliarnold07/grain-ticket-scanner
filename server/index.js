@@ -9,7 +9,6 @@ import {
   createBin,
   createContract,
   createDriver,
-  createFarmUserAccount,
   createLocation,
   deleteCurrentAccount,
   createInventoryTransaction,
@@ -31,7 +30,11 @@ import {
   listFarmUsers,
   listInventoryTransactions,
   listTicketLogs,
-  repairEmployeeAccount,
+  removeFarmMember,
+  farmFeatureRpc,
+  authenticateJoinRequest,
+  signupInvitedUser,
+  isPublicInvitationRequest,
   requireSupabaseAuth,
   resumeSupabaseAuth,
   currentAccount,
@@ -55,8 +58,12 @@ import {
   getFarmEntitlement,
   requireFarmEntitlement
 } from './entitlementService.js';
+import { registerFarmInvitationRoutes } from './farmInvitationRoutes.js';
 
 const app = express();
+// Default is direct connection. Set a verified proxy-hop count only after testing the hosting topology.
+const proxyHops = Number(process.env.FARM_INVITES_PROXY_HOPS || 0);
+if (Number.isInteger(proxyHops) && proxyHops > 0 && proxyHops <= 2) app.set('trust proxy', proxyHops);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -130,6 +137,7 @@ const employeeRoutes = new Set([
 ]);
 
 app.use('/api', (req, res, next) => {
+  if (isPublicInvitationRequest(req)) return next();
   if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
 
   const account = currentAccount();
@@ -139,6 +147,11 @@ app.use('/api', (req, res, next) => {
   if (account?.role === 'employee' && employeeRoutes.has(routeKey)) return next();
 
   return res.status(403).json({ error: 'Admin access is required for this action.' });
+});
+
+registerFarmInvitationRoutes(app, {
+  rpc: farmFeatureRpc, authenticate: authenticateJoinRequest,
+  signup: signupInvitedUser, requestAccount: () => currentAccount()
 });
 
 function blankTicket() {
@@ -606,14 +619,7 @@ app.get('/api/users', async (_req, res) => {
   }
 });
 
-app.post('/api/users', async (req, res) => {
-  try {
-    res.status(201).json({ user: await createFarmUserAccount(req.body || {}) });
-  } catch (error) {
-    logError('Farm user account creation failed', error);
-    res.status(400).json({ error: 'Could not create farm user account.', detail: error.message });
-  }
-});
+app.post('/api/users', (_req, res) => res.status(410).json({ error: 'Use the farm invitation code to join a farm.' }));
 
 app.patch('/api/users/:id/role', async (req, res) => {
   try {
@@ -624,14 +630,14 @@ app.patch('/api/users/:id/role', async (req, res) => {
   }
 });
 
-app.post('/api/users/repair', async (req, res) => {
+app.delete('/api/users/:id', async (req, res) => {
   try {
-    res.json({ user: await repairEmployeeAccount(req.body || {}) });
+    res.json(await removeFarmMember(req.params.id));
   } catch (error) {
-    logError('Employee account repair failed', error);
-    res.status(400).json({ error: 'Could not repair employee account.', detail: error.message });
+    res.status(400).json({ error: 'Could not remove farm member.', detail: error.message });
   }
 });
+app.post('/api/users/repair', (_req, res) => res.status(410).json({ error: 'Automatic farm reassignment is no longer supported.' }));
 
 app.post('/api/contracts', async (req, res) => {
   try {

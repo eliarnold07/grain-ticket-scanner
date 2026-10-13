@@ -14,3 +14,4 @@ npm-debug.log*
 .deploy/
 .npm-cache-supabase/
 *.zip
+.feature-validation/

@@ -33,6 +33,8 @@ const blankBinForm = {
   crop_type: '',
   estimated_capacity_bushels: '',
   current_bushels: '',
+  opening_mode: 'empty',
+  fill_percentage: '',
   notes: ''
 };
 const blankTransactionForm = {
@@ -49,12 +51,6 @@ const blankContractForm = {
   delivery_window: '',
   status: 'Open',
   notes: ''
-};
-const blankEmployeeForm = {
-  display_name: '',
-  email: '',
-  password: '',
-  role: 'employee'
 };
 
 function ticketEditForm(log = {}) {
@@ -269,6 +265,9 @@ function App() {
     return requestedMode === 'signup' ? 'signup' : 'login';
   });
   const [authForm, setAuthForm] = useState({ farmName: '', email: '', password: '' });
+  const [joinCode, setJoinCode] = useState('');
+  const [joinPreview, setJoinPreview] = useState(null);
+  const [joinExistingLogin, setJoinExistingLogin] = useState(false);
   const [authStatus, setAuthStatus] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
@@ -310,9 +309,9 @@ function App() {
   const [showArchivedContracts, setShowArchivedContracts] = useState(false);
   const [showArchivedTickets, setShowArchivedTickets] = useState(false);
   const [farmUsers, setFarmUsers] = useState([]);
-  const [employeeForm, setEmployeeForm] = useState(blankEmployeeForm);
+  const [invitationCode, setInvitationCode] = useState('');
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
+  const [isManagingUsers, setIsManagingUsers] = useState(false);
   const [userStatus, setUserStatus] = useState('');
   const [contractForm, setContractForm] = useState(blankContractForm);
   const [editingContractId, setEditingContractId] = useState('');
@@ -544,9 +543,32 @@ function App() {
     setAuthStatus(authMode === 'signup' ? 'Creating farm account...' : 'Signing in...');
 
     try {
-      const data = authMode === 'signup'
+      if (authMode === 'join' && !joinPreview) {
+        const response = await fetch(`${API_BASE}/api/farm-invites/preview`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: joinCode })
+        });
+        if (!response.ok) throw new Error(await readErrorResponse(response));
+        setJoinPreview(await response.json());
+        setAuthStatus('');
+        return;
+      }
+      let data = authMode === 'signup'
         ? await signUpFarm(authForm)
-        : await signInFarm(authForm);
+        : authMode === 'join' && !joinExistingLogin ? null : await signInFarm(authForm);
+      if (authMode === 'join') {
+        const response = await fetch(`${API_BASE}/api/farm-invites/${joinExistingLogin ? 'accept' : 'register'}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...(data ? { Authorization: `Bearer ${data.access_token}` } : {}) },
+          body: JSON.stringify({ join_token: joinPreview.join_token, email: authForm.email, password: authForm.password })
+        });
+        if (!response.ok) {
+          if (data) await signOutFarm(data.access_token);
+          throw new Error(await readErrorResponse(response));
+        }
+        const result = await response.json();
+        if (!data) data = result;
+        storeSession(data);
+        setJoinPreview(null);
+      }
 
       if (!data.access_token) {
         setAuthStatus('Account created. Check your email to confirm the account, then log in.');
@@ -572,9 +594,11 @@ function App() {
     sessionRef.current = null;
     await signOutFarm(activeSession?.access_token);
     setSession(null);
+    selectAuthMode('login');
     setFarm(null);
     setAccount(null);
     setFarmUsers([]);
+    setInvitationCode('');
     setUserStatus('');
     setTicketLogs([]);
     setBins([]);
@@ -746,77 +770,62 @@ function App() {
     }
   }
 
-  function updateEmployeeForm(field, value) {
-    setEmployeeForm((current) => ({ ...current, [field]: value }));
-  }
-
-  async function createFarmUser(event) {
-    event.preventDefault();
-    if (isCreatingEmployee) return;
-
-    setIsCreatingEmployee(true);
-    const roleLabel = employeeForm.role === 'admin' ? 'administrator' : 'employee';
-    setUserStatus(`Creating ${roleLabel} login...`);
+  async function loadInvitation(rotate = false) {
+    if (rotate && !window.confirm('Replace the farm invitation code? The previous code and uncompleted joins will stop working. Existing members keep access.')) return;
+    setIsManagingUsers(true);
     try {
-      const response = await apiFetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(employeeForm)
-      });
+      const response = await apiFetch(`/api/users/invitation${rotate ? '/rotate' : ''}`, { method: rotate ? 'POST' : 'GET' });
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      setEmployeeForm(blankEmployeeForm);
-      await loadFarmUsers({ silent: true });
-      setUserStatus(`${roleLabel === 'administrator' ? 'Administrator' : 'Employee'} account created. They can now log in with that email and password.`);
+      setInvitationCode((await response.json()).code);
+      setUserStatus(rotate ? 'Farm invitation code replaced. Existing memberships are unchanged.' : '');
     } catch (error) {
       setUserStatus(cleanMessage(error));
     } finally {
-      setIsCreatingEmployee(false);
+      setIsManagingUsers(false);
     }
   }
 
-  async function promoteUser(user) {
-    if (user.role === 'admin') return;
+  function selectAuthMode(mode) {
+    setAuthMode(mode);
+    setJoinPreview(null);
+    setAuthStatus('');
+    setAuthForm((current) => ({ ...current, password: '' }));
+  }
 
-    setUserStatus(`Promoting ${user.display_name || user.email} to administrator...`);
+  async function shareInvitation() {
     try {
-      const response = await apiFetch(`/api/users/${user.user_id}/role`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'admin' })
-      });
-      if (!response.ok) throw new Error(await readErrorResponse(response));
-      await loadFarmUsers({ silent: true });
-      setUserStatus(`${user.display_name || user.email} is now an administrator.`);
-    } catch (error) {
-      setUserStatus(cleanMessage(error));
+      if (navigator.share) await navigator.share({ title: farm?.name || 'BinFlow farm', text: `${farm?.name || 'BinFlow farm'} invitation code: ${invitationCode}` });
+      else await copyInvitation();
+    } catch (error) { if (error.name !== 'AbortError') setUserStatus('Sharing is unavailable. Copy the invitation code instead.'); }
+  }
+
+  async function copyInvitation() {
+    try {
+      await navigator.clipboard.writeText(invitationCode);
+      setUserStatus('Farm invitation code copied.');
+    } catch {
+      setUserStatus('Select and copy the displayed code. Clipboard access is unavailable.');
     }
   }
 
-  async function repairEmployee() {
-    if (!employeeForm.email.trim() || !employeeForm.display_name.trim()) {
-      setUserStatus('Enter the existing employee name and email first.');
-      return;
-    }
-
-    setIsCreatingEmployee(true);
-    setUserStatus('Repairing employee farm access...');
+  async function changeMember(user, remove = false) {
+    const nextRole = user.role === 'admin' ? 'employee' : 'admin';
+    if (!window.confirm(remove ? `Remove ${user.display_name || user.email} from this farm? Their personal login and farm history will not be deleted.` : `Change ${user.display_name || user.email} to ${nextRole === 'admin' ? 'Admin' : 'Employee'}?`)) return;
+    setIsManagingUsers(true);
     try {
-      const response = await apiFetch('/api/users/repair', {
-        method: 'POST',
+      const response = await apiFetch(`/api/users/${user.user_id}${remove ? '' : '/role'}`, {
+        method: remove ? 'DELETE' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          display_name: employeeForm.display_name,
-          email: employeeForm.email
-        })
+        ...(remove ? {} : { body: JSON.stringify({ role: nextRole }) })
       });
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      setEmployeeForm(blankEmployeeForm);
+      if (user.user_id === account.user_id) { await logout(); return; }
       await loadFarmUsers({ silent: true });
-      setUserStatus('Employee login repaired and attached to this farm.');
+      setUserStatus(remove ? 'Farm member removed. Their login and historical records remain intact.' : 'Farm role updated.');
     } catch (error) {
       setUserStatus(cleanMessage(error));
     } finally {
-      setIsCreatingEmployee(false);
+      setIsManagingUsers(false);
     }
   }
 
@@ -1290,6 +1299,7 @@ function App() {
   function startEditingBin(bin) {
     setEditingBinId(bin.id);
     setBinForm({
+      ...blankBinForm,
       bin_name: bin.bin_name || '',
       crop_type: bin.crop_type || '',
       estimated_capacity_bushels: String(bin.estimated_capacity_bushels || ''),
@@ -1387,7 +1397,7 @@ function App() {
         [binId]: blankTransactionForm
       }));
       await Promise.all([loadBins(), loadDropdowns({ silent: true }), loadDashboard({ silent: true })]);
-      setStatus(result.capacity_capped
+      setStatus(form.transaction_type === 'ESTIMATE_CORRECTION' ? 'Inventory estimate saved as an auditable adjustment.' : result.capacity_capped
         ? 'Inventory transaction saved. Bin balance was capped at its capacity.'
         : 'Inventory transaction saved.');
     } catch (error) {
@@ -1947,12 +1957,13 @@ function App() {
 
         <form className="auth-card" onSubmit={submitAuth}>
           <div className="auth-tabs">
-            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Log In</button>
-            <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Create Farm Account</button>
+            <button type="button" disabled={isAuthenticating} className={authMode === 'login' ? 'active' : ''} onClick={() => selectAuthMode('login')}>Log In</button>
+            <button type="button" disabled={isAuthenticating} className={authMode === 'signup' ? 'active' : ''} onClick={() => selectAuthMode('signup')}>Create Farm Account</button>
+            <button type="button" disabled={isAuthenticating} className={authMode === 'join' ? 'active' : ''} onClick={() => selectAuthMode('join')}>Join Existing Farm</button>
           </div>
           <div className="form-heading">
-            <h2>{authMode === 'signup' ? 'Start a farm account' : 'Welcome back'}</h2>
-            <p>{authMode === 'signup' ? 'Create the administrator account for your farm.' : 'Use your farm account to continue.'}</p>
+            <h2>{authMode === 'signup' ? 'Start a farm account' : authMode === 'join' ? joinPreview ? `Join ${joinPreview.farm_name}` : 'Join an existing farm' : 'Welcome back'}</h2>
+            <p>{authMode === 'signup' ? 'Create the administrator account for your farm.' : authMode === 'join' ? joinPreview ? 'Confirm this is your farm. You will join as an Employee.' : 'Enter the invitation code from your farm Admin.' : 'Use your farm account to continue.'}</p>
           </div>
           {authMode === 'signup' && (
             <label className="field">
@@ -1960,6 +1971,19 @@ function App() {
               <input value={authForm.farmName} onChange={(event) => updateAuthField('farmName', event.target.value)} required />
             </label>
           )}
+          {authMode === 'join' && !joinPreview && (
+            <label className="field">
+              <span>Farm Invitation Code</span>
+              <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} autoCapitalize="characters" autoCorrect="off" spellCheck={false} placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" maxLength={40} required />
+            </label>
+          )}
+          {authMode === 'join' && joinPreview && (
+            <div className="join-confirmation">
+              <label><input type="checkbox" checked={joinExistingLogin} onChange={(event) => setJoinExistingLogin(event.target.checked)} /> I already have a BinFlow login</label>
+              <button type="button" onClick={() => { setJoinPreview(null); setAuthStatus(''); }}>Use a different code</button>
+            </div>
+          )}
+          {(authMode !== 'join' || joinPreview) && <>
           <label className="field">
             <span>Email</span>
             <input type="email" value={authForm.email} onChange={(event) => updateAuthField('email', event.target.value)} required />
@@ -1968,8 +1992,9 @@ function App() {
             <span>Password</span>
             <input type="password" minLength={8} value={authForm.password} onChange={(event) => updateAuthField('password', event.target.value)} required />
           </label>
+          </>}
           <button className="primary-button" type="submit" disabled={isAuthenticating}>
-            {isAuthenticating ? 'Please wait...' : authMode === 'signup' ? 'Create Farm Account' : 'Log In'}
+            {isAuthenticating ? 'Please wait...' : authMode === 'signup' ? 'Create Farm Account' : authMode === 'join' ? joinPreview ? joinExistingLogin ? 'Log In and Join Farm' : 'Create Login and Join Farm' : 'Find Farm' : 'Log In'}
           </button>
           {authStatus && <div className="notice">{authStatus}</div>}
         </form>
@@ -2721,12 +2746,27 @@ function App() {
               </label>
               <label className="field">
                 <span>Estimated Capacity</span>
-                <input inputMode="decimal" value={binForm.estimated_capacity_bushels} onChange={(event) => updateBinForm('estimated_capacity_bushels', event.target.value)} />
+                <input type="number" min="0.01" step="any" required value={binForm.estimated_capacity_bushels} onChange={(event) => updateBinForm('estimated_capacity_bushels', event.target.value)} />
               </label>
-              <label className="field">
+              {!editingBinId && <label className="field">
+                <span>Starting Inventory</span>
+                <select value={binForm.opening_mode} onChange={(event) => updateBinForm('opening_mode', event.target.value)}>
+                  <option value="empty">Start Empty</option>
+                  <option value="bushels">Estimated Starting Bushels</option>
+                  <option value="percentage">Estimated Fill Percentage</option>
+                </select>
+              </label>}
+              {editingBinId ? <label className="field">
                 <span>Current Bushels</span>
-                <input inputMode="decimal" value={binForm.current_bushels} onChange={(event) => updateBinForm('current_bushels', event.target.value)} disabled={Boolean(editingBinId)} />
-              </label>
+                <input value={binForm.current_bushels} disabled />
+              </label> : binForm.opening_mode === 'bushels' ? <label className="field">
+                <span>Estimated Starting Bushels</span>
+                <input type="number" min="0" max={binForm.estimated_capacity_bushels || undefined} step="any" required value={binForm.current_bushels} onChange={(event) => updateBinForm('current_bushels', event.target.value)} />
+              </label> : binForm.opening_mode === 'percentage' ? <label className="field">
+                <span>Estimated Fill Percentage</span>
+                <input type="number" min="0" max="100" step="any" required value={binForm.fill_percentage} onChange={(event) => updateBinForm('fill_percentage', event.target.value)} />
+                <small>Estimated starting inventory: {formatNumber(Number(binForm.estimated_capacity_bushels || 0) * Number(binForm.fill_percentage || 0) / 100)} bu</small>
+              </label> : null}
               <label className="field wide-field">
                 <span>Notes / Description</span>
                 <textarea rows={2} value={binForm.notes} onChange={(event) => updateBinForm('notes', event.target.value)} />
@@ -2760,6 +2800,7 @@ function App() {
                       <div>
                         <h3>{bin.bin_name}</h3>
                         <p>{displayCrop(bin.crop_type)} · {formatNumber(bin.current_bushels)} bu</p>
+                        {bin.inventory_is_estimated && <small className="estimate-label">Includes estimated inventory</small>}
                       </div>
                       <strong>{percent === null ? '-' : `${percent}% full`}</strong>
                     </div>
@@ -2785,7 +2826,7 @@ function App() {
 
                     <div className="inventory-actions">
                       <button type="button" onClick={() => startEditingBin(bin)}>Edit</button>
-                      <button type="button" onClick={() => removeBin(bin.id)}>Delete</button>
+                      <button type="button" disabled={bin.inventory_is_estimated} title={bin.inventory_is_estimated ? 'Estimate history must be retained.' : undefined} onClick={() => removeBin(bin.id)}>Delete</button>
                     </div>
 
                     <form className="transaction-form" onSubmit={(event) => saveInventoryTransaction(bin.id, event)}>
@@ -2795,15 +2836,16 @@ function App() {
                           <option value="ADD_GRAIN">Add Grain</option>
                           <option value="REMOVE_GRAIN">Remove Grain</option>
                           <option value="MANUAL_ADJUSTMENT">Manual Adjustment</option>
+                          <option value="ESTIMATE_CORRECTION">Establish / Correct Inventory Estimate</option>
                         </select>
                       </label>
                       <label className="field">
-                        <span>{form.transaction_type === 'MANUAL_ADJUSTMENT' ? 'New Balance' : 'Bushel Amount'}</span>
-                        <input inputMode="decimal" value={form.bushel_amount} onChange={(event) => updateTransactionForm(bin.id, 'bushel_amount', event.target.value)} />
+                        <span>{form.transaction_type === 'ESTIMATE_CORRECTION' ? 'Estimated Current Balance' : form.transaction_type === 'MANUAL_ADJUSTMENT' ? 'New Balance' : 'Bushel Amount'}</span>
+                        <input type="number" min="0" step="any" required max={form.transaction_type === 'ESTIMATE_CORRECTION' ? bin.estimated_capacity_bushels : undefined} value={form.bushel_amount} onChange={(event) => updateTransactionForm(bin.id, 'bushel_amount', event.target.value)} />
                       </label>
                       <label className="field wide-field">
-                        <span>Transaction Notes</span>
-                        <input value={form.notes} onChange={(event) => updateTransactionForm(bin.id, 'notes', event.target.value)} />
+                        <span>{form.transaction_type === 'ESTIMATE_CORRECTION' ? 'Estimate / Correction Reason' : 'Transaction Notes'}</span>
+                        <input required={form.transaction_type === 'ESTIMATE_CORRECTION'} value={form.notes} onChange={(event) => updateTransactionForm(bin.id, 'notes', event.target.value)} />
                       </label>
                       <button type="submit">Save Transaction</button>
                     </form>
@@ -2816,11 +2858,12 @@ function App() {
                         bin.recent_transactions.map((transaction) => (
                           <div className="transaction-row" key={transaction.id}>
                             <div>
-                              <span>{transaction.transaction_type}</span>
+                              <span>{transaction.transaction_type === 'OPENING_BALANCE_ESTIMATE' ? 'Estimated Opening Balance' : transaction.transaction_type === 'ESTIMATE_CORRECTION' ? 'Inventory Estimate Correction' : transaction.transaction_type}</span>
                               <strong>{formatNumber(transaction.previous_bin_balance)} {'->'} {formatNumber(transaction.new_bin_balance)} bu</strong>
                               <small>{new Date(transaction.created_at).toLocaleString()}</small>
+                              {['OPENING_BALANCE_ESTIMATE', 'ESTIMATE_CORRECTION'].includes(transaction.transaction_type) && <small>{transaction.notes}</small>}
                             </div>
-                            <button type="button" onClick={() => removeInventoryTransaction(transaction.id)}>Delete</button>
+                            {!['OPENING_BALANCE_ESTIMATE', 'ESTIMATE_CORRECTION'].includes(transaction.transaction_type) && <button type="button" onClick={() => removeInventoryTransaction(transaction.id)}>Delete</button>}
                           </div>
                         ))
                       )}
@@ -2842,58 +2885,22 @@ function App() {
           {userStatus && <div className="notice">{userStatus}</div>}
 
           <div className="user-management-grid">
-            <form className="employee-form" onSubmit={createFarmUser}>
+            <div className="employee-form farm-invitation">
               <div className="form-heading compact-heading">
-                <h3>Add Farm User</h3>
-                <p>Administrators manage the full farm. Employees only scan and submit tickets.</p>
+                <h3>Farm Invitation Code</h3>
+                <p>New members join as Employees. Share this code only with people you authorize to access your farm.</p>
               </div>
               <label className="field">
-                <span>Name</span>
-                <input
-                  value={employeeForm.display_name}
-                  onChange={(event) => updateEmployeeForm('display_name', event.target.value)}
-                  required
-                />
+                <span>Invitation Code</span>
+                <input readOnly value={invitationCode} aria-label="Farm invitation code" placeholder="Not displayed" onFocus={(event) => event.target.select()} />
               </label>
-              <label className="field">
-                <span>Role</span>
-                <select
-                  value={employeeForm.role}
-                  onChange={(event) => updateEmployeeForm('role', event.target.value)}
-                >
-                  <option value="employee">Employee — ticket scanner only</option>
-                  <option value="admin">Administrator — full farm access</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Email</span>
-                <input
-                  type="email"
-                  value={employeeForm.email}
-                  onChange={(event) => updateEmployeeForm('email', event.target.value)}
-                  required
-                />
-              </label>
-              <label className="field">
-                <span>Temporary Password</span>
-                <input
-                  type="password"
-                  minLength={8}
-                  value={employeeForm.password}
-                  onChange={(event) => updateEmployeeForm('password', event.target.value)}
-                  required
-                />
-              </label>
-              <button className="primary-button" type="submit" disabled={isCreatingEmployee}>
-                {isCreatingEmployee ? 'Creating User...' : `Create ${employeeForm.role === 'admin' ? 'Administrator' : 'Employee'} Login`}
-              </button>
-              <button className="secondary-button" type="button" onClick={repairEmployee} disabled={isCreatingEmployee}>
-                Repair Existing Employee Login
-              </button>
-              <small className="field-help">
-                Use repair if an employee login accidentally opened as its own farm administrator.
-              </small>
-            </form>
+              <div className="inventory-actions">
+                <button type="button" disabled={isManagingUsers} onClick={() => loadInvitation()}>View Code</button>
+                <button type="button" disabled={!invitationCode || isManagingUsers} onClick={copyInvitation}>Copy</button>
+                <button type="button" disabled={!invitationCode || isManagingUsers} onClick={shareInvitation}>Share</button>
+                <button type="button" disabled={isManagingUsers} onClick={() => loadInvitation(true)}>Regenerate</button>
+              </div>
+            </div>
 
             <div className="farm-user-list">
               <div className="section-title-row">
@@ -2916,11 +2923,10 @@ function App() {
                     </div>
                     <div className="farm-user-role-actions">
                       <span className={`role-badge ${user.role}`}>{user.role}</span>
-                      {user.role === 'employee' && (
-                        <button type="button" onClick={() => promoteUser(user)}>
-                          Promote to Admin
-                        </button>
-                      )}
+                      <button type="button" disabled={isManagingUsers || (user.role === 'admin' && farmUsers.filter((member) => member.role === 'admin').length <= 1)} onClick={() => changeMember(user)}>
+                        {user.role === 'employee' ? 'Promote to Admin' : 'Make Employee'}
+                      </button>
+                      <button type="button" disabled={isManagingUsers || (user.role === 'admin' && farmUsers.filter((member) => member.role === 'admin').length <= 1)} onClick={() => changeMember(user, true)}>Remove</button>
                     </div>
                   </article>
                 ))

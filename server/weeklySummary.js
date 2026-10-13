@@ -1,5 +1,5 @@
 const WEEKLY_SUMMARY_TIME_ZONE = 'America/New_York';
-const MANUAL_TRANSACTION_TYPES = new Set(['ADD_GRAIN', 'REMOVE_GRAIN', 'MANUAL_ADJUSTMENT']);
+const MANUAL_TRANSACTION_TYPES = new Set(['ADD_GRAIN', 'REMOVE_GRAIN', 'MANUAL_ADJUSTMENT', 'OPENING_BALANCE_ESTIMATE', 'ESTIMATE_CORRECTION']);
 
 function numeric(value) {
   const number = Number(String(value ?? '').replace(/[$,]/g, ''));
@@ -90,6 +90,7 @@ function manualDelta(transaction) {
   if (type === 'MANUAL_ADJUSTMENT') {
     return numeric(transaction.new_bin_balance) - numeric(transaction.previous_bin_balance);
   }
+  if (['OPENING_BALANCE_ESTIMATE', 'ESTIMATE_CORRECTION'].includes(type)) return numeric(transaction.applied_bushel_amount);
   return 0;
 }
 
