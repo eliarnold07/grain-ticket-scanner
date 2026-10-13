@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#123f2c">
+  <meta name="description" content="BinFlow privacy policy for grain ticket scanning, farm records, OCR processing, and account information.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://getbinflow.com/privacy">
+  <link rel="icon" type="image/png" href="/landing-concept/binflow-mark.png">
+  <link rel="apple-touch-icon" href="/landing-concept/binflow-mark.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="BinFlow">
+  <meta property="og:title" content="Privacy Policy | BinFlow">
+  <meta property="og:description" content="How BinFlow collects, uses, stores, and protects account information, farm records, ticket photos, and OCR data.">
+  <meta property="og:url" content="https://getbinflow.com/privacy">
+
+  <title>Privacy Policy | BinFlow</title>
+  <link rel="stylesheet" href="/landing-concept/styles.css">
+  <style>
+    html {
+      scroll-behavior: smooth;
+    }
+
+    .policy-shell {
+      width: min(100% - 32px, 960px);
+      margin: 0 auto;
+      padding: 128px 0 72px;
+    }
+
+    .policy-hero {
+      display: grid;
+      gap: 16px;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid rgba(35, 52, 41, 0.18);
+    }
+
+    .policy-hero h1 {
+      margin: 0;
+      color: #123f2c;
+      font-size: clamp(2.25rem, 6vw, 4.75rem);
+      line-height: 0.95;
+    }
+
+    .policy-hero p {
+      max-width: 760px;
+      margin: 0;
+      color: #405244;
+      font-size: 1.08rem;
+      line-height: 1.65;
+    }
+
+    .policy-card {
+      display: grid;
+      gap: 22px;
+      padding: 28px;
+      border: 1px solid rgba(35, 52, 41, 0.14);
+      border-radius: 8px;
+      background: #fffdf8;
+      box-shadow: 0 18px 55px rgba(35, 52, 41, 0.08);
+    }
+
+    .policy-card section {
+      display: grid;
+      gap: 10px;
+      padding-top: 4px;
+    }
+
+    .policy-card h2 {
+      margin: 0;
+      color: #123f2c;
+      font-size: 1.35rem;
+      line-height: 1.2;
+    }
+
+    .policy-card p,
+    .policy-card li {
+      color: #405244;
+      line-height: 1.65;
+    }
+
+    .policy-card p,
+    .policy-card ul {
+      margin: 0;
+    }
+
+    .policy-card ul {
+      padding-left: 1.2rem;
+    }
+
+    .policy-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: #526255;
+      font-weight: 700;
+    }
+
+    .policy-meta span {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: #edf4ee;
+    }
+
+    .policy-contact {
+      display: grid;
+      gap: 8px;
+    }
+
+    .policy-contact a {
+      color: #265d3a;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .policy-contact a:hover {
+      text-decoration: underline;
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: flex-end;
+      color: #526255;
+      font-size: 0.94rem;
+      font-weight: 700;
+    }
+
+    .footer-links a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      color: #123f2c;
+      text-decoration: underline;
+    }
+
+    @media (max-width: 720px) {
+      .policy-shell {
+        width: min(100% - 24px, 960px);
+        padding-top: 104px;
+      }
+
+      .policy-card {
+        padding: 20px;
+      }
+
+      .footer-links {
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="BinFlow home">
+      <img class="brand-mark" src="/landing-concept/binflow-mark.png" alt="">
+      <span>
+        <strong>BinFlow</strong>
+        <small>Grain operations software</small>
+      </span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="/#product">Product</a>
+      <a href="/#workflow">Workflow</a>
+      <a href="/demo/">Demo</a>
+      <a href="/#contact">Contact</a>
+    </nav>
+    <div class="header-actions">
+      <a class="action-pill login-pill" href="/app/">Existing Farm Login</a>
+      <a class="action-pill account-pill" href="/app/?auth=signup">Create Farm Account</a>
+    </div>
+  </header>
+
+  <main class="policy-shell">
+    <div class="policy-hero">
+      <p class="eyebrow">BinFlow privacy policy</p>
+      <h1>Privacy Policy</h1>
+      <p>This policy explains how BinFlow collects, uses, stores, and shares information when farms use BinFlow's website, web application, and iOS application.</p>
+      <div class="policy-meta">
+        <span>Effective date: October 13, 2026</span>
+        <span>Service: BinFlow</span>
+      </div>
+    </div>
+
+    <article class="policy-card">
+      <section>
+        <h2>1. Information We Collect</h2>
+        <p>BinFlow collects information needed to create farm accounts, authenticate users, process grain ticket photos, and maintain farm operating records.</p>
+        <ul>
+          <li><strong>Account and membership information:</strong> farm name, user name or display name, email address, password authentication data handled by Supabase Auth, farm membership, role, and user ID.</li>
+          <li><strong>Contact information:</strong> information users provide when contacting BinFlow, including name, email address, phone number, and message content.</li>
+          <li><strong>Farm records:</strong> tickets, bins, inventory transactions, contracts, payment statuses, payment notes, delivery locations, driver names, weekly summary data, and related operational records entered by users.</li>
+          <li><strong>Ticket images and extracted data:</strong> grain ticket photos selected or captured by users, plus OCR results and reviewed ticket details.</li>
+          <li><strong>Technical information:</strong> authentication tokens, request metadata, server logs, device/browser information, and error information used to operate and troubleshoot the service.</li>
+        </ul>
+        <p>BinFlow does not currently collect device location data through geolocation APIs. The current application code does not include advertising SDKs, third-party analytics SDKs, or crash analytics SDKs.</p>
+      </section>
+
+      <section>
+        <h2>2. How We Use Information</h2>
+        <p>BinFlow uses information to provide and support the product, including to:</p>
+        <ul>
+          <li>create accounts and authenticate users;</li>
+          <li>connect users to the correct farm and enforce farm-level access;</li>
+          <li>process grain ticket photos and extract ticket fields for user review;</li>
+          <li>store and display ticket, bin, inventory, contract, payment, driver, and delivery-location records;</li>
+          <li>generate dashboards, summaries, and operational views;</li>
+          <li>send or prepare farm summaries and service communications where configured;</li>
+          <li>secure, maintain, debug, and improve the service.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>3. Ticket Image Processing And Service Providers</h2>
+        <p>When a user uploads or captures a grain ticket photo, BinFlow sends the image to BinFlow's backend API for processing. The backend may send the image content to OpenAI to extract structured ticket information. The extracted information is returned to the user for review before it is saved as a farm record.</p>
+        <p>BinFlow uses Supabase for authentication and database services, Render for backend API hosting, GitHub Pages for the public website and frontend hosting, OpenAI for ticket-image extraction, and Resend for configured email delivery such as weekly farm summaries. These providers process information only as needed to operate BinFlow.</p>
+      </section>
+
+      <section>
+        <h2>4. Billing And Financial Information</h2>
+        <p>The current production application does not activate paid subscriptions or in-app billing. BinFlow does store farm-entered financial and operational records such as contract prices, ticket revenue calculations, payment status, payment date, amount received, payment references, and payment notes.</p>
+        <p>If subscriptions are activated in the future, payment processing will be handled by payment providers such as Stripe for web billing or Apple for iOS subscriptions where required. BinFlow does not intend to store raw credit card numbers.</p>
+      </section>
+
+      <section>
+        <h2>5. Sharing And Disclosures</h2>
+        <p>BinFlow does not sell personal information and does not use personal information for third-party advertising or cross-app tracking. BinFlow may share information with service providers that help operate the product, comply with law, protect rights and safety, or complete a business transfer such as a merger or acquisition.</p>
+      </section>
+
+      <section>
+        <h2>6. Data Storage, Security, And Retention</h2>
+        <p>BinFlow stores account and farm records using Supabase and operates its backend through Render. BinFlow uses authenticated requests, farm membership checks, and farm-scoped data access to help protect farm records. No internet service can guarantee absolute security.</p>
+        <p>Farm records are retained while an account is active and as needed for operational history, accounting, legal, support, security, and dispute-resolution purposes. Because grain tickets, inventory, contracts, and payment records may be part of a farm's operating history, deletion requests may result in account removal or anonymization while certain farm records are retained where legitimately necessary.</p>
+      </section>
+
+      <section>
+        <h2>7. Account Deletion And Privacy Requests</h2>
+        <p>Users may request access, correction, deletion, or other help with their information by contacting BinFlow using the contact information below. BinFlow will review the request and may need to verify the requester's identity and farm authority before changing or deleting information.</p>
+        <p>BinFlow does not currently offer automatic in-app account deletion. Account deletion support is being prepared with safeguards for farm ownership, employees, and historical farm records. Until that workflow is available, deletion requests should be sent directly to BinFlow.</p>
+      </section>
+
+      <section>
+        <h2>8. Children's Privacy</h2>
+        <p>BinFlow is intended for farm business and operational use. It is not directed to children under 13, and BinFlow does not knowingly collect personal information from children under 13.</p>
+      </section>
+
+      <section>
+        <h2>9. Policy Updates</h2>
+        <p>BinFlow may update this policy as the product, providers, laws, or business practices change. The effective date above will be updated when the policy changes materially.</p>
+      </section>
+
+      <section class="policy-contact">
+        <h2>10. Contact BinFlow</h2>
+        <p>For privacy requests or questions about this policy, contact BinFlow:</p>
+        <p>Email: <a href="mailto:eliarnold07@gmail.com">eliarnold07@gmail.com</a></p>
+        <p>Phone: <a href="tel:+18127893480">812-789-3480</a></p>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <a class="brand" href="/" aria-label="BinFlow home">
+      <img class="brand-mark" src="/landing-concept/binflow-mark.png" alt="">
+      <span><strong>BinFlow</strong><small>Grain operations software</small></span>
+    </a>
+    <div class="footer-note">
+      <strong>Built by Eli Arnold, Indiana University Informatics student.</strong>
+      <span>Private beta · Secure farm-level accounts · Public demo uses sample data</span>
+    </div>
+    <div class="footer-links" aria-label="Footer links">
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/app/">Farm Login</a>
+    </div>
+  </footer>
+</body>
+</html>
