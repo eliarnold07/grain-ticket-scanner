@@ -789,6 +789,25 @@ footer {
   font-size: 0.82rem;
 }
 
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: flex-end;
+  font-weight: 800;
+}
+
+.footer-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.footer-links a:hover {
+  color: var(--green-900);
+  text-decoration: underline;
+}
+
 @media (max-width: 900px) {
   .site-header {
     align-items: flex-start;
