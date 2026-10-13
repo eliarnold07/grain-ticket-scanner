@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { Capacitor } from '@capacitor/core';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import binFlowMark from './assets/binflow-mark.png';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
-
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
 const MAX_IMAGE_DIMENSION = 1800;
 const JPEG_QUALITY = 0.82;
+const isNativeApp = Capacitor.isNativePlatform();
 
 const fieldLabels = {
   date: 'Date',
@@ -324,6 +326,11 @@ function App() {
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [newDriverName, setNewDriverName] = useState('');
   const [newLocationName, setNewLocationName] = useState('');
+  const [accountDeletion, setAccountDeletion] = useState(null);
+  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState('');
+  const [deleteAccountStatus, setDeleteAccountStatus] = useState('');
+  const [isLoadingDeletion, setIsLoadingDeletion] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [binForm, setBinForm] = useState(blankBinForm);
   const [editingBinId, setEditingBinId] = useState('');
   const [transactionForms, setTransactionForms] = useState({});
@@ -810,6 +817,59 @@ function App() {
       setUserStatus(cleanMessage(error));
     } finally {
       setIsCreatingEmployee(false);
+    }
+  }
+
+  async function loadAccountDeletion() {
+    setIsLoadingDeletion(true);
+    setDeleteAccountStatus('');
+
+    try {
+      const response = await apiFetch('/api/account-deletion');
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      setAccountDeletion(await response.json());
+    } catch (error) {
+      setDeleteAccountStatus(cleanMessage(error));
+    } finally {
+      setIsLoadingDeletion(false);
+    }
+  }
+
+  async function deleteMyAccount(event) {
+    event.preventDefault();
+    if (isDeletingAccount) return;
+
+    setIsDeletingAccount(true);
+    setDeleteAccountStatus('Deleting your account...');
+
+    try {
+      const response = await apiFetch('/api/account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmEmail: deleteConfirmEmail })
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data?.eligibility && accountDeletion) {
+          setAccountDeletion((current) => ({ ...current, eligibility: data.eligibility }));
+        }
+        throw new Error(data?.detail || data?.error || 'Could not delete this account.');
+      }
+
+      storeSession(null);
+      sessionRef.current = null;
+      setSession(null);
+      setFarm(null);
+      setAccount(null);
+      setDeleteConfirmEmail('');
+      setAccountDeletion(null);
+      setAuthStatus('Your account has been deleted.');
+      setActiveView('dashboard');
+    } catch (error) {
+      setDeleteAccountStatus(cleanMessage(error));
+    } finally {
+      setIsDeletingAccount(false);
     }
   }
 
@@ -1401,8 +1461,7 @@ function App() {
     setStatus('Choose or take a photo to begin.');
   }
 
-  function handleFileChange(event) {
-    const file = event.target.files?.[0];
+  function setTicketPhoto(file) {
     setSelectedFile(file || null);
     setDuplicate(null);
     setIsSuccess(false);
@@ -1417,6 +1476,41 @@ function App() {
     } else {
       setPreviewUrl('');
       setStatus('Choose or take a photo to begin.');
+    }
+  }
+
+  function handleFileChange(event) {
+    setTicketPhoto(event.target.files?.[0] || null);
+    event.target.value = '';
+  }
+
+  async function chooseNativeTicketPhoto(source) {
+    if (!isNativeApp) return;
+
+    try {
+      const photo = await Camera.getPhoto({
+        quality: 85,
+        resultType: CameraResultType.Uri,
+        source,
+        allowEditing: false,
+        saveToGallery: false
+      });
+      const file = await nativePhotoToFile(photo);
+      setTicketPhoto(file);
+    } catch (error) {
+      const message = String(error?.message || '').toLowerCase();
+
+      if (message.includes('cancel')) {
+        setStatus('Photo selection canceled. Choose or take a ticket photo to begin.');
+        return;
+      }
+
+      if (message.includes('denied') || message.includes('permission')) {
+        setStatus('BinFlow does not have permission to use that photo source. Check iPhone Settings and try again.');
+        return;
+      }
+
+      setStatus(cleanMessage(error));
     }
   }
 
@@ -1750,6 +1844,80 @@ function App() {
     );
   }
 
+  function renderAccountDeletionPanel() {
+    const eligibility = accountDeletion?.eligibility;
+    const accountEmail = account?.email || session?.user?.email || '';
+    const canDelete = eligibility?.allowed && deleteConfirmEmail.trim().toLowerCase() === accountEmail.trim().toLowerCase();
+
+    return (
+      <section className="account-deletion-panel">
+        <div className="form-heading compact-heading">
+          <h3>Delete My Account</h3>
+          <p>
+            Delete your BinFlow login and remove your access to this farm. Historical farm records may be retained or anonymized
+            where needed for operational, accounting, legal, or dispute-resolution purposes.
+          </p>
+        </div>
+
+        {!accountDeletion ? (
+          <button className="secondary-button" type="button" onClick={loadAccountDeletion} disabled={isLoadingDeletion}>
+            {isLoadingDeletion ? 'Checking...' : 'Review Deletion Options'}
+          </button>
+        ) : (
+          <form className="delete-account-form" onSubmit={deleteMyAccount}>
+            <div className={eligibility?.allowed ? 'notice warning' : 'notice danger'}>
+              <strong>{eligibility?.allowed ? 'Deletion can continue.' : 'Action needed before deletion.'}</strong>
+              <p>{eligibility?.reason}</p>
+              {eligibility?.retention && <p>{eligibility.retention}</p>}
+              {accountDeletion.member_count !== undefined && (
+                <p>
+                  Farm members: {accountDeletion.member_count}. Farm administrators: {accountDeletion.admin_count}.
+                </p>
+              )}
+            </div>
+
+            {eligibility?.transfer_required && (
+              <p className="field-help">
+                Create or promote another administrator before deleting your account. This prevents the farm from being left without an owner.
+              </p>
+            )}
+
+            <label className="field">
+              <span>Confirm Email</span>
+              <input
+                type="email"
+                value={deleteConfirmEmail}
+                onChange={(event) => setDeleteConfirmEmail(event.target.value)}
+                placeholder={accountEmail}
+                disabled={!eligibility?.allowed || isDeletingAccount}
+              />
+            </label>
+
+            <div className="modal-actions">
+              <button
+                className="danger-button"
+                type="submit"
+                disabled={!canDelete || isDeletingAccount}
+              >
+                {isDeletingAccount ? 'Deleting...' : 'Delete My Account'}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={loadAccountDeletion}
+                disabled={isLoadingDeletion || isDeletingAccount}
+              >
+                Refresh Status
+              </button>
+            </div>
+          </form>
+        )}
+
+        {deleteAccountStatus && <div className="notice">{deleteAccountStatus}</div>}
+      </section>
+    );
+  }
+
   if (!isAuthReady) {
     return (
       <main className="auth-shell">
@@ -1907,6 +2075,8 @@ function App() {
           Locations, Users, and Drivers
         </button>
       </nav>}
+
+      {renderAccountDeletionPanel()}
 
       {isAdmin && activeView === 'dashboard' && (
         <section className="dashboard-view">
@@ -2831,20 +3001,45 @@ function App() {
       )}
 
       <section className="capture-panel">
-        <label className="upload-target">
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleFileChange}
-            disabled={isExtracting || isSubmitting}
-          />
+        <div className="upload-target" aria-live="polite">
           {previewUrl ? (
             <img src={previewUrl} alt="Selected grain ticket preview" />
           ) : (
             <span>Tap to take or upload a ticket photo</span>
           )}
-        </label>
+        </div>
+
+        {isNativeApp ? (
+          <div className="capture-actions" aria-label="Ticket photo options">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => chooseNativeTicketPhoto(CameraSource.Camera)}
+              disabled={isExtracting || isSubmitting}
+            >
+              Take Photo
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => chooseNativeTicketPhoto(CameraSource.Photos)}
+              disabled={isExtracting || isSubmitting}
+            >
+              Choose Photo
+            </button>
+          </div>
+        ) : (
+          <label className="file-picker-button">
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileChange}
+              disabled={isExtracting || isSubmitting}
+            />
+            Choose or Take Photo
+          </label>
+        )}
 
         <button className="primary-button" onClick={extractTicket} disabled={isExtracting || isSubmitting || !selectedFile}>
           {isExtracting ? 'Scanning Ticket...' : 'Extract Ticket Data'}
@@ -3056,6 +3251,26 @@ function App() {
       )}
     </main>
   );
+}
+
+async function nativePhotoToFile(photo) {
+  if (!photo?.webPath) {
+    throw new Error('Could not read the selected photo.');
+  }
+
+  const response = await fetch(photo.webPath);
+
+  if (!response.ok) {
+    throw new Error('Could not prepare this photo for upload.');
+  }
+
+  const blob = await response.blob();
+  const extension = photo.format || blob.type.split('/')[1] || 'jpg';
+
+  return new File([blob], `grain-ticket.${extension}`, {
+    type: blob.type || `image/${extension}`,
+    lastModified: Date.now()
+  });
 }
 
 createRoot(document.getElementById('root')).render(<App />);

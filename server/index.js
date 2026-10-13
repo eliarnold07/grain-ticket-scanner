@@ -11,6 +11,7 @@ import {
   createDriver,
   createFarmUserAccount,
   createLocation,
+  deleteCurrentAccount,
   createInventoryTransaction,
   createTicketSaleTransaction,
   deleteBin,
@@ -21,6 +22,7 @@ import {
   deleteTicketLog,
   deleteTicketLogByInventoryTransactionId,
   getInventorySnapshot,
+  getAccountDeletionPreview,
   getTicketLogSnapshot,
   listBins,
   listContracts,
@@ -49,6 +51,10 @@ import {
   sendWeeklySummaries,
   startWeeklySummaryScheduler
 } from './weeklySummaryScheduler.js';
+import {
+  getFarmEntitlement,
+  requireFarmEntitlement
+} from './entitlementService.js';
 
 const app = express();
 const upload = multer({
@@ -68,6 +74,8 @@ const allowedOrigins = new Set([
   'https://getbinflow.com',
   'https://www.getbinflow.com',
   'https://eliarnold07.github.io',
+  'capacitor://localhost',
+  'binflow://localhost',
   'http://localhost:5173'
 ]);
 
@@ -109,11 +117,14 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', requireSupabaseAuth);
+app.use('/api', requireFarmEntitlement);
 
 const employeeRoutes = new Set([
   'GET /session',
+  'GET /account-deletion',
   'GET /dropdowns',
   'GET /scanner-contracts',
+  'DELETE /account',
   'POST /extract-ticket',
   'POST /submit-ticket'
 ]);
@@ -354,8 +365,39 @@ app.post('/api/weekly-summary/send', async (req, res) => {
   }
 });
 
-app.get('/api/session', (_req, res) => {
-  res.json({ farm: currentFarm(), account: currentAccount() });
+app.get('/api/session', async (_req, res) => {
+  const farm = currentFarm();
+
+  res.json({
+    farm,
+    account: currentAccount(),
+    entitlement: await getFarmEntitlement(farm?.id)
+  });
+});
+
+app.get('/api/account-deletion', async (_req, res) => {
+  try {
+    res.json(await getAccountDeletionPreview());
+  } catch (error) {
+    logError('Account deletion preview failed', error);
+    res.status(500).json({
+      error: 'Could not prepare account deletion details.',
+      detail: error.message
+    });
+  }
+});
+
+app.delete('/api/account', async (req, res) => {
+  try {
+    res.json(await deleteCurrentAccount(req.body || {}));
+  } catch (error) {
+    logError('Account deletion failed', error);
+    res.status(error.status || 400).json({
+      error: 'Could not delete this account.',
+      detail: error.message,
+      eligibility: error.eligibility
+    });
+  }
 });
 
 app.get('/api/dropdowns', async (_req, res) => {

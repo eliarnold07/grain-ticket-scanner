@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
+import { accountDeletionEligibility } from './accountDeletionPolicy.js';
 import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
 
 const requestContext = new AsyncLocalStorage();
@@ -263,6 +264,101 @@ async function farmHasOperationalData(farmId) {
     tables.map((table) => db(`${table}?select=id&farm_id=eq.${farmId}&limit=1`))
   );
   return results.some((rows) => rows.length > 0);
+}
+
+async function anonymizeUserReferences(userId, farmId) {
+  await Promise.all([
+    db(`tickets?farm_id=eq.${farmId}&scanned_by_user_id=eq.${userId}`, {
+      method: 'PATCH',
+      body: {
+        scanned_by_user_id: null,
+        scanned_by_name: 'Deleted account'
+      }
+    }).catch(() => []),
+    db(`farm_promotions?farm_id=eq.${farmId}&created_by_user_id=eq.${userId}`, {
+      method: 'PATCH',
+      body: {
+        created_by_user_id: null
+      }
+    }).catch(() => [])
+  ]);
+}
+
+async function accountDeletionSnapshot() {
+  const { farmId, member, farm } = context();
+  const [members, hasOperationalData] = await Promise.all([
+    db(`farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&farm_id=eq.${farmId}&order=created_at.asc`),
+    farmHasOperationalData(farmId)
+  ]);
+
+  return {
+    farm,
+    account: member,
+    members,
+    hasOperationalData,
+    eligibility: accountDeletionEligibility({
+      account: member,
+      farm,
+      members,
+      hasOperationalData
+    })
+  };
+}
+
+export async function getAccountDeletionPreview() {
+  const snapshot = await accountDeletionSnapshot();
+
+  return {
+    farm: snapshot.farm,
+    account: snapshot.account,
+    eligibility: snapshot.eligibility,
+    member_count: snapshot.members.length,
+    admin_count: snapshot.members.filter((member) => member.role === 'admin').length,
+    has_operational_data: snapshot.hasOperationalData
+  };
+}
+
+export async function deleteCurrentAccount({ confirmEmail } = {}) {
+  if (String(process.env.ACCOUNT_DELETION_ENABLED || '').toLowerCase() !== 'true') {
+    const error = new Error('Account deletion is not enabled yet. Contact support to complete this request.');
+    error.status = 403;
+    throw error;
+  }
+
+  const snapshot = await accountDeletionSnapshot();
+  const { farmId, user, member } = context();
+  const expectedEmail = clean(member.email || user.email).toLowerCase();
+  const submittedEmail = clean(confirmEmail).toLowerCase();
+
+  if (!supabaseServiceRoleKey) throw new Error('Account deletion requires SUPABASE_SERVICE_ROLE_KEY.');
+  if (!submittedEmail || submittedEmail !== expectedEmail) {
+    throw new Error('Enter your account email exactly to confirm deletion.');
+  }
+  if (!snapshot.eligibility.allowed) {
+    const error = new Error(snapshot.eligibility.reason);
+    error.status = 409;
+    error.eligibility = snapshot.eligibility;
+    throw error;
+  }
+
+  await anonymizeUserReferences(user.id, farmId);
+  await db(`farm_accounts?user_id=eq.${user.id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
+
+  if (snapshot.eligibility.action === 'delete_empty_farm') {
+    await db(`farms?id=eq.${farmId}`, { method: 'DELETE' });
+  }
+
+  await rawRequest(`/auth/v1/admin/users/${user.id}`, {
+    method: 'DELETE',
+    serviceRole: true
+  });
+
+  return {
+    deleted: true,
+    action: snapshot.eligibility.action,
+    farm_closed: snapshot.eligibility.farm_closure === true,
+    retained_records: Boolean(snapshot.hasOperationalData)
+  };
 }
 
 export async function createFarmUserAccount(input) {

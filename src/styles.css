@@ -541,7 +541,7 @@ h2 {
   text-align: center;
 }
 
-.upload-target input {
+.file-picker-button input {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;
@@ -567,6 +567,27 @@ h2 {
   font-weight: 800;
 }
 
+.capture-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.file-picker-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 12px;
+  border-radius: 8px;
+  background: #526255;
+  color: #ffffff;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+}
+
 .submit-button {
   background: #9d4f21;
 }
@@ -590,6 +611,38 @@ h2 {
 .notice.warning {
   border-left-color: #b76820;
   background: #fff2df;
+}
+
+.notice.danger {
+  border-left-color: #7a3524;
+  background: #f9e5df;
+}
+
+.account-deletion-panel {
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid #dfc8bf;
+  border-radius: 8px;
+  background: #fff9f5;
+}
+
+.delete-account-form {
+  display: grid;
+  gap: 12px;
+}
+
+.danger-button {
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 0 14px;
+  background: #7a3524;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .modal-backdrop {

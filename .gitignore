@@ -1,9 +1,16 @@
 node_modules
 .npm-cache/
 dist
+dist-mobile
 .env
+.env.local
+.env.*.local
 data/
 google-service-account.json
 *-service-account*.json
 .DS_Store
 npm-debug.log*
+.cli-home/
+.deploy/
+.npm-cache-supabase/
+*.zip
