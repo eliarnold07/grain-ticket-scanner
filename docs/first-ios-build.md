@@ -2,6 +2,8 @@
 
 Goal: install the existing BinFlow Capacitor app on an iPhone for the first real-device test. Do not deploy, change production databases, activate billing, or commit secrets.
 
+For the installed-iPhone missing-Supabase-config error, follow `ios-environment-fix.md` for the exact secure setup/rebuild procedure. Mobile builds now require production API/Supabase configuration before packaging; copying the environment template alone is insufficient.
+
 ## 1. Transfer The Repository To A Mac
 
 Best options:
@@ -42,10 +44,10 @@ Never put these in any `VITE_` variable:
 - Stripe secret key.
 - Apple private keys or shared secrets.
 
-For the first Mac build, you can also inject the production API URL directly:
+Check the completed local configuration before the first Mac build:
 
 ```bash
-VITE_API_URL=https://api.getbinflow.com npm run build:mobile
+npm run check:mobile-env
 ```
 
 ## 3. Install Required Tools On The Mac
@@ -71,7 +73,7 @@ xcodebuild -version
 From the repo root:
 
 ```bash
-npm install
+npm ci
 ```
 
 ## 5. Run Automated Tests
@@ -95,7 +97,7 @@ This verifies the GitHub Pages/web build remains healthy.
 Use the production API URL for the bundled iOS app:
 
 ```bash
-VITE_API_URL=https://api.getbinflow.com npm run build:mobile
+npm run build:mobile
 ```
 
 ## 8. Sync Capacitor On The Mac

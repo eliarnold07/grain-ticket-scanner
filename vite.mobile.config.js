@@ -2,6 +2,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { loadMobileEnv } from './scripts/mobile-env.js';
 
 function capacitorAppEntry() {
   return {
@@ -19,17 +20,20 @@ function capacitorAppEntry() {
   };
 }
 
-export default defineConfig({
-  base: './',
-  plugins: [react(), capacitorAppEntry()],
-  publicDir: false,
-  build: {
-    outDir: 'dist-mobile',
-    emptyOutDir: true,
-    rollupOptions: {
-      input: {
-        index: 'app/index.html'
+export default defineConfig(({ mode }) => {
+  loadMobileEnv(process.cwd(), mode);
+  return {
+    base: './',
+    plugins: [react(), capacitorAppEntry()],
+    publicDir: false,
+    build: {
+      outDir: 'dist-mobile',
+      emptyOutDir: true,
+      rollupOptions: {
+        input: {
+          index: 'app/index.html'
+        }
       }
     }
-  }
+  };
 });

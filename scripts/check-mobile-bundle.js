@@ -1,8 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { loadMobileEnv } from './mobile-env.js';
 
 const roots = ['dist-mobile', path.join('ios', 'App', 'App', 'public')];
-const requiredText = ['https://api.getbinflow.com'];
+const config = loadMobileEnv();
+const requiredText = [config.apiUrl, config.supabaseUrl, config.publicKey];
 const forbiddenText = [
   'http://localhost:3001',
   'SUPABASE_SERVICE_ROLE_KEY',
@@ -11,7 +13,11 @@ const forbiddenText = [
   'sk_live_',
   'sk_test_',
   'APP_STORE_PRIVATE_KEY',
-  'APPLE_SHARED_SECRET'
+  'APPLE_SHARED_SECRET',
+  'sb_secret_',
+  'postgres://',
+  'postgresql://',
+  'PRIVATE KEY-----'
 ];
 const forbiddenPaths = [
   `${path.sep}demo${path.sep}`,
@@ -48,9 +54,20 @@ const contents = await Promise.all(searchableFiles.map(async (file) => ({
 
 const failures = [];
 
-for (const expected of requiredText) {
-  if (!contents.some(({ text }) => text.includes(expected))) {
-    failures.push(`Missing required production marker: ${expected}`);
+for (const root of roots) {
+  const bundled = contents.filter(({ file }) => file.startsWith(`${root}${path.sep}`));
+  for (const [index, expected] of requiredText.entries()) {
+    if (!bundled.some(({ text }) => text.includes(expected))) {
+      failures.push(`Missing configured ${['production API', 'production Supabase URL', 'public Supabase key'][index]} in ${root}. Rebuild and sync before installing.`);
+    }
+  }
+}
+
+for (const { file, text } of contents) {
+  for (const token of text.match(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g) || []) {
+    let claims;
+    try { claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')); } catch { continue; }
+    if (claims.role !== 'anon') failures.push(`Non-public JWT found in ${file}. Token value omitted.`);
   }
 }
 

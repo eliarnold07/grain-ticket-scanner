@@ -9,6 +9,8 @@
     "server": "node server/index.js",
     "client": "vite --host 0.0.0.0",
     "build": "vite build",
+    "check:mobile-env": "node scripts/check-mobile-env.js",
+    "prebuild:mobile": "npm run check:mobile-env",
     "build:mobile": "vite build --mode mobile --config vite.mobile.config.js",
     "preview": "vite preview --host 0.0.0.0",
     "check:mobile-bundle": "node scripts/check-mobile-bundle.js",
