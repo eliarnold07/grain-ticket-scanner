@@ -5,21 +5,20 @@ import multer from 'multer';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import {
-  addTicketLog,
+  submitTicketAtomically,
+  ticketRequestStatus,
   createBin,
   createContract,
   createDriver,
   createLocation,
   deleteCurrentAccount,
   createInventoryTransaction,
-  createTicketSaleTransaction,
   deleteBin,
   deleteContract,
   deleteDriver,
   deleteLocation,
   deleteInventoryTransaction,
   deleteTicketLog,
-  deleteTicketLogByInventoryTransactionId,
   getInventorySnapshot,
   getAccountDeletionPreview,
   getTicketLogSnapshot,
@@ -59,11 +58,9 @@ import {
   requireFarmEntitlement
 } from './entitlementService.js';
 import { registerFarmInvitationRoutes } from './farmInvitationRoutes.js';
+import { requireUuid, validateApiIds } from './restQuery.js';
 
 const app = express();
-// Default is direct connection. Set a verified proxy-hop count only after testing the hosting topology.
-const proxyHops = Number(process.env.FARM_INVITES_PROXY_HOPS || 0);
-if (Number.isInteger(proxyHops) && proxyHops > 0 && proxyHops <= 2) app.set('trust proxy', proxyHops);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -123,6 +120,11 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: '2mb' }));
+app.use('/api', validateApiIds);
+app.param('id', (req, res, next, value) => {
+  try { requireUuid(value); next(); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
 app.use('/api', requireSupabaseAuth);
 app.use('/api', requireFarmEntitlement);
 
@@ -144,6 +146,7 @@ app.use('/api', (req, res, next) => {
   if (account?.role === 'admin') return next();
 
   const routeKey = `${req.method} ${req.path}`;
+  if (account?.role === 'employee' && req.method === 'GET' && /^\/ticket-submissions\/[0-9a-f-]+$/i.test(req.path)) return next();
   if (account?.role === 'employee' && employeeRoutes.has(routeKey)) return next();
 
   return res.status(403).json({ error: 'Admin access is required for this action.' });
@@ -152,6 +155,11 @@ app.use('/api', (req, res, next) => {
 registerFarmInvitationRoutes(app, {
   rpc: farmFeatureRpc, authenticate: authenticateJoinRequest,
   signup: signupInvitedUser, requestAccount: () => currentAccount()
+});
+
+app.get('/api/ticket-submissions/:id', async (req, res) => {
+  try { res.json(await ticketRequestStatus(req.params.id)); }
+  catch { res.status(400).json({ error: 'Could not verify the previous submission.' }); }
 });
 
 function blankTicket() {
@@ -556,10 +564,6 @@ app.delete('/api/ticket-logs/:id', async (req, res) => {
   try {
     const deletedLog = await deleteTicketLog(req.params.id);
 
-    if (deletedLog.inventory_transaction_id) {
-      await deleteInventoryTransaction(deletedLog.inventory_transaction_id);
-    }
-
     res.json({
       ok: true,
       deleted_log: deletedLog
@@ -831,13 +835,8 @@ app.post('/api/inventory-transactions', async (req, res) => {
 
 app.delete('/api/inventory-transactions/:id', async (req, res) => {
   try {
-    const deletedLog = await deleteTicketLogByInventoryTransactionId(req.params.id);
     const result = await deleteInventoryTransaction(req.params.id);
-
-    res.json({
-      ...result,
-      deleted_ticket_log: deletedLog
-    });
+    res.json(result);
   } catch (error) {
     logError('Inventory transaction delete failed', error);
     res.status(400).json({
@@ -993,25 +992,7 @@ app.post('/api/submit-ticket', async (req, res) => {
 
   try {
     await validateTicketAccounting(ticket);
-    let inventoryTransactionId = '';
-
-    if (ticket.hauled_from.toLowerCase() !== 'field') {
-      const inventoryResult = await createTicketSaleTransaction({
-        binName: ticket.hauled_from,
-        bushels: ticket.bushels,
-        cropType: ticket.crop,
-        ticketId: ticket.ticket_number,
-        notes: `Ticket sale ${ticket.ticket_number}`,
-        allowOverdraw: req.body?.allow_bin_overdraw === true
-      });
-
-      inventoryTransactionId = inventoryResult?.transaction?.id || '';
-    }
-
-    const ticketLog = await addTicketLog({
-      ...ticket,
-      inventory_transaction_id: inventoryTransactionId
-    });
+    const ticketLog = await submitTicketAtomically(ticket, requireUuid(req.body?.request_id, 'Submission request ID'), req.body?.allow_bin_overdraw === true);
 
     console.log('Reviewed grain ticket submission saved', {
       ticket_number: ticket.ticket_number,
@@ -1029,7 +1010,7 @@ app.post('/api/submit-ticket', async (req, res) => {
   } catch (error) {
     logError('Ticket submit failed', error);
     const isOverdraw = error.code === 'BIN_INVENTORY_OVERDRAW';
-    res.status(isOverdraw ? 409 : 500).json({
+    res.status(isOverdraw || error.message.includes('IDEMPOTENCY_CONFLICT') ? 409 : error.status || 500).json({
       error: 'Could not save ticket data.',
       detail: error.message,
       code: error.code,

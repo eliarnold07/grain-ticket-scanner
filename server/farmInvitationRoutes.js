@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { generateFarmCode, hashFarmCode, encryptFarmCode, decryptFarmCode, validateFarmInvitationKey } from './farmInvitation.js';
+import { invitationClientIp } from './invitationIdentity.js';
 
 export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, requestAccount }) {
   function ready() {
@@ -32,7 +33,10 @@ export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, r
   app.post('/api/farm-invites/preview', route(async (req) => {
     let hash;
     try { hash = hashFarmCode(req.body?.code); } catch { hash = 'invalid'; }
-    const attemptKey = createHmac('sha256', process.env.FARM_INVITE_ENCRYPTION_KEY).update(`farm-invites:${req.ip}`).digest('hex');
+    let identity;
+    try { identity = invitationClientIp(req); }
+    catch { const error = new Error('Farm invitation joining is unavailable until proxy identity is configured.'); error.status = 503; throw error; }
+    const attemptKey = createHmac('sha256', process.env.FARM_INVITE_ENCRYPTION_KEY).update(`farm-invites:${identity}`).digest('hex');
     return rpc('preview_farm_invite', { p_hash: hash, p_attempt_key: attemptKey });
   }));
   app.post('/api/farm-invites/register', route(async (req) => {

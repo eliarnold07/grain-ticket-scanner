@@ -1,5 +1,7 @@
 # Pre-App Store Feature Sprint
 
+**Follow-up:** see `pre-app-store-hardening.md` for the isolated hardening implementation and new migrations. This document otherwise records the original sprint, not current production sign-off.
+
 **Review update:** see `pre-app-store-feature-review.md` before approving integration or migrations. Focused review reproduced three release blockers involving legacy farm-filter URL construction, direct bin writes/cascades, and linked-ticket deletion/replay. Passing implementation tests do not constitute production sign-off. No blocker fixes or production changes were made as part of preservation/review.
 
 ## Status and boundaries

@@ -43,6 +43,7 @@ try {
     const context = await browser.newContext({ viewport });
     let currentRole = 'admin';
     let loginRequests = 0;
+    const submissionIds = [];
     const session = () => ({ access_token: 'fictional-ui-test-token', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: account.user_id, email: account.email } });
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
@@ -75,6 +76,11 @@ try {
       else if (path === '/api/contracts' || path === '/api/scanner-contracts') data = { contracts: [] };
       else if (path === '/api/drivers') data = { drivers: [] };
       else if (path === '/api/locations') data = { locations: [] };
+      else if (path === '/api/submit-ticket') {
+        submissionIds.push(body.request_id);
+        if (submissionIds.length === 1) return route.abort('failed');
+        data = { ok:true,message:'Fictional retry recovered',ticket_log:{id:'fictional-ticket',...body.ticket} };
+      }
       else throw new Error(`Unexpected mocked request: ${method} ${path}`);
       return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': base }, body: JSON.stringify(data) });
     });
@@ -119,6 +125,24 @@ try {
     assert.equal(await page.getByLabel('Estimate / Correction Reason', { exact: true }).getAttribute('required'), '');
     await page.screenshot({ path: resolve(output, `inventory-${viewport.width}.png`), fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    async function prepareRetryTicket() {
+      await page.getByRole('button',{name:'Scan',exact:true}).click();
+      await page.locator('.review-form').getByLabel('Ticket number',{exact:true}).fill('FICTIONAL-UI-RETRY');
+      await page.locator('.review-form').getByLabel('Date',{exact:true}).fill('2026-10-14');
+      await page.locator('.review-form').getByLabel('Commodity',{exact:true}).fill('Corn');
+      await page.locator('.review-form').getByLabel('Bushels',{exact:true}).fill('100');
+    }
+    await prepareRetryTicket();
+    await page.getByRole('button',{name:'Submit Reviewed Ticket',exact:true}).click();
+    await page.getByText(/Network request failed/).waitFor();
+    assert.match(submissionIds[0],/^[a-f0-9-]{36}$/);
+    await page.reload();
+    await prepareRetryTicket();
+    await page.getByRole('button',{name:'Submit Reviewed Ticket',exact:true}).click();
+    await page.getByText('Fictional retry recovered',{exact:true}).waitFor();
+    assert.equal(submissionIds[1],submissionIds[0]);
+    assert.equal(await page.evaluate((id)=>localStorage.getItem(`binflow-pending-ticket:${id}`),account.user_id),null);
+    await page.screenshot({path:resolve(output,`retry-${viewport.width}.png`),fullPage:true});
     await context.close();
   }
   assert.deepEqual(errors, []);

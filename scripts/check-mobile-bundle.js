@@ -1,8 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 
 const roots = ['dist-mobile', path.join('ios', 'App', 'App', 'public')];
-const requiredText = ['https://api.getbinflow.com'];
+const { values } = parseArgs({ options: { 'api-url': { type: 'string', default: 'https://api.getbinflow.com' } } });
+const expectedApi = new URL(values['api-url']);
+if (expectedApi.protocol !== 'https:' || expectedApi.pathname !== '/' || expectedApi.search || expectedApi.hash || expectedApi.username || expectedApi.password) throw new Error('An explicit HTTPS API origin is required.');
+const requiredText = [expectedApi.origin];
 const forbiddenText = [
   'http://localhost:3001',
   'SUPABASE_SERVICE_ROLE_KEY',

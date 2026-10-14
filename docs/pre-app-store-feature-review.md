@@ -1,5 +1,7 @@
 # Feature Sprint Review And Staging Gates
 
+**Historical baseline:** these findings describe preserved commit `f8af8f8`. Follow-up local implementation is documented in `pre-app-store-hardening.md`. Neither passing new regressions nor a prepared concurrency harness clears the production/staging gates. The current `review-feature-boundaries.js` now runs offline regressions; the original defect reproducer remains in the preserved commit.
+
 This branch is being preserved for review, **not approved for production**. Review used repository code, the previously documented production catalog findings, local PostgreSQL simulations and fictional browser responses. No production database/Auth request was made. The original worktree and Apple Review preparation work were not changed.
 
 ## Findings (severity order)

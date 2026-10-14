@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import binFlowMark from './assets/binflow-mark.png';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
+import { pendingTicketRequest, completeTicketRequest } from './ticketRequest.js';
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
 const MAX_IMAGE_DIMENSION = 1800;
@@ -299,6 +300,7 @@ function App() {
   const [status, setStatus] = useState('Choose or take a photo to begin.');
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionConflict, setSubmissionConflict] = useState(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [isLoadingDropdowns, setIsLoadingDropdowns] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -599,6 +601,7 @@ function App() {
     setAccount(null);
     setFarmUsers([]);
     setInvitationCode('');
+    setSubmissionConflict(false);
     setUserStatus('');
     setTicketLogs([]);
     setBins([]);
@@ -1723,10 +1726,12 @@ function App() {
     setStatus('Submitting reviewed data...');
 
     try {
+      const requestId = pendingTicketRequest(window.localStorage, account.user_id);
       const sendTicket = (confirmedOverdraw) => apiFetch('/api/submit-ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          request_id: requestId,
           ticket: {
             ...ticket,
             ...assignment
@@ -1737,7 +1742,7 @@ function App() {
       let response = await sendTicket(allowBinOverdraw);
 
       if (response.status === 409 && !allowBinOverdraw) {
-        const errorData = await response.json();
+        const errorData = await response.clone().json();
 
         if (errorData.code === 'BIN_INVENTORY_OVERDRAW') {
           allowBinOverdraw = window.confirm('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
@@ -1756,6 +1761,8 @@ function App() {
       }
 
       const data = await response.json();
+      completeTicketRequest(window.localStorage, account.user_id, requestId);
+      setSubmissionConflict(false);
 
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
@@ -1789,10 +1796,29 @@ function App() {
         loadScannerContracts({ silent: true });
       }
     } catch (error) {
+      setSubmissionConflict(String(error.message).includes('IDEMPOTENCY_CONFLICT'));
       setStatus(cleanMessage(error));
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function reviewPreviousSubmission() {
+    try {
+      const id = pendingTicketRequest(window.localStorage, account.user_id);
+      const response = await apiFetch(`/api/ticket-submissions/${id}`);
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const receipt = await response.json();
+      if (receipt.status === 'unknown') {
+        setSubmissionConflict(false);
+        setStatus('No committed ticket was found for the pending request. You can retry without changing its request ID.');
+        return;
+      }
+      if (!window.confirm(`Previous ticket ${receipt.ticket.ticket_number}: ${formatNumber(receipt.ticket.bushels)} bu, ${receipt.status === 'deleted' ? 'subsequently deleted' : 'already saved'}. Clear this pending request only if you intend to submit a different load. Do not submit the same load twice.`)) return;
+      completeTicketRequest(window.localStorage, account.user_id, id);
+      setSubmissionConflict(false);
+      setStatus('Previous submission verified. Submit again only for a different load.');
+    } catch (error) { setStatus(cleanMessage(error)); }
   }
 
   function submitContractOverage() {
@@ -1857,7 +1883,8 @@ function App() {
   function renderAccountDeletionPanel() {
     const eligibility = accountDeletion?.eligibility;
     const accountEmail = account?.email || session?.user?.email || '';
-    const canDelete = eligibility?.allowed && deleteConfirmEmail.trim().toLowerCase() === accountEmail.trim().toLowerCase();
+    const executionAvailable = accountDeletion?.execution_available === true;
+    const canDelete = executionAvailable && eligibility?.allowed && deleteConfirmEmail.trim().toLowerCase() === accountEmail.trim().toLowerCase();
 
     return (
       <section className="account-deletion-panel">
@@ -1876,7 +1903,7 @@ function App() {
         ) : (
           <form className="delete-account-form" onSubmit={deleteMyAccount}>
             <div className={eligibility?.allowed ? 'notice warning' : 'notice danger'}>
-              <strong>{eligibility?.allowed ? 'Deletion can continue.' : 'Action needed before deletion.'}</strong>
+              <strong>{!executionAvailable ? 'Account deletion is temporarily unavailable. Contact support.' : eligibility?.allowed ? 'Deletion can continue.' : 'Action needed before deletion.'}</strong>
               <p>{eligibility?.reason}</p>
               {eligibility?.retention && <p>{eligibility.retention}</p>}
               {accountDeletion.member_count !== undefined && (
@@ -1899,7 +1926,7 @@ function App() {
                 value={deleteConfirmEmail}
                 onChange={(event) => setDeleteConfirmEmail(event.target.value)}
                 placeholder={accountEmail}
-                disabled={!eligibility?.allowed || isDeletingAccount}
+                disabled={!executionAvailable || !eligibility?.allowed || isDeletingAccount}
               />
             </label>
 
@@ -3165,6 +3192,7 @@ function App() {
         <button className="submit-button" type="submit" disabled={isSubmitting || isExtracting}>
           {isSubmitting ? 'Submitting Ticket...' : 'Submit Reviewed Ticket'}
         </button>
+        {submissionConflict && <button type="button" disabled={isSubmitting} onClick={reviewPreviousSubmission}>Review Previous Submission</button>}
       </form>
         </>
       )}
