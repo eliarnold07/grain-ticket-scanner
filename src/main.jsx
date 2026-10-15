@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import binFlowMark from './assets/binflow-mark.png';
+import AccountSettings from './AccountSettings.jsx';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
@@ -326,11 +327,6 @@ function App() {
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [newDriverName, setNewDriverName] = useState('');
   const [newLocationName, setNewLocationName] = useState('');
-  const [accountDeletion, setAccountDeletion] = useState(null);
-  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState('');
-  const [deleteAccountStatus, setDeleteAccountStatus] = useState('');
-  const [isLoadingDeletion, setIsLoadingDeletion] = useState(false);
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [binForm, setBinForm] = useState(blankBinForm);
   const [editingBinId, setEditingBinId] = useState('');
   const [transactionForms, setTransactionForms] = useState({});
@@ -471,6 +467,12 @@ function App() {
       }
     });
 
+    if (terminalAuthFailureRef.current || sessionRef.current?.user?.id !== activeSession.user?.id) {
+      const error = new Error('Your account session changed. Please sign in again.');
+      error.code = 'AUTH_CONTEXT_CHANGED';
+      throw error;
+    }
+
     if (response.status !== 401 || !retry || !activeSession.refresh_token) {
       return response;
     }
@@ -479,6 +481,12 @@ function App() {
       if (!refreshPromiseRef.current) {
         refreshPromiseRef.current = refreshSession(activeSession.refresh_token)
           .then((nextSession) => {
+            if (terminalAuthFailureRef.current || sessionRef.current?.access_token !== activeSession.access_token) {
+              storeSession(sessionRef.current);
+              const error = new Error('Your account session changed. Please sign in again.');
+              error.code = 'AUTH_CONTEXT_CHANGED';
+              throw error;
+            }
             sessionRef.current = nextSession;
             setSession(nextSession);
             return nextSession;
@@ -497,13 +505,19 @@ function App() {
         }
       });
 
+      if (terminalAuthFailureRef.current || sessionRef.current?.user?.id !== nextSession.user?.id) {
+        const error = new Error('Your account session changed. Please sign in again.');
+        error.code = 'AUTH_CONTEXT_CHANGED';
+        throw error;
+      }
+
       if (retryResponse.status === 401) {
         endInvalidSession();
       }
 
       return retryResponse;
     } catch (error) {
-      endInvalidSession();
+      if (error.code !== 'AUTH_CONTEXT_CHANGED') endInvalidSession();
       throw error;
     }
   }
@@ -517,6 +531,7 @@ function App() {
     setSession(null);
     setFarm(null);
     setAccount(null);
+    setActiveView('dashboard');
     setAuthStatus('Your session expired. Please log in again.');
   }
 
@@ -587,7 +602,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (isEmployee && activeView !== 'scanner') {
+    if (isEmployee && !['scanner', 'settings'].includes(activeView)) {
       setActiveView('scanner');
     }
   }, [activeView, isEmployee]);
@@ -820,57 +835,27 @@ function App() {
     }
   }
 
-  async function loadAccountDeletion() {
-    setIsLoadingDeletion(true);
-    setDeleteAccountStatus('');
-
-    try {
-      const response = await apiFetch('/api/account-deletion');
-      if (!response.ok) throw new Error(await readErrorResponse(response));
-      setAccountDeletion(await response.json());
-    } catch (error) {
-      setDeleteAccountStatus(cleanMessage(error));
-    } finally {
-      setIsLoadingDeletion(false);
-    }
-  }
-
-  async function deleteMyAccount(event) {
-    event.preventDefault();
-    if (isDeletingAccount) return;
-
-    setIsDeletingAccount(true);
-    setDeleteAccountStatus('Deleting your account...');
-
-    try {
-      const response = await apiFetch('/api/account', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmEmail: deleteConfirmEmail })
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        if (data?.eligibility && accountDeletion) {
-          setAccountDeletion((current) => ({ ...current, eligibility: data.eligibility }));
-        }
-        throw new Error(data?.detail || data?.error || 'Could not delete this account.');
-      }
-
-      storeSession(null);
-      sessionRef.current = null;
-      setSession(null);
-      setFarm(null);
-      setAccount(null);
-      setDeleteConfirmEmail('');
-      setAccountDeletion(null);
-      setAuthStatus('Your account has been deleted.');
-      setActiveView('dashboard');
-    } catch (error) {
-      setDeleteAccountStatus(cleanMessage(error));
-    } finally {
-      setIsDeletingAccount(false);
-    }
+  function finishAccountDeletion() {
+    if (sessionRef.current?.user?.id !== account?.user_id) return;
+    // Clear in-memory farm data as well as the persisted session after confirmed deletion.
+    terminalAuthFailureRef.current = true;
+    refreshPromiseRef.current = null;
+    sessionRef.current = null;
+    storeSession(null);
+    setSession(null);
+    setFarm(null);
+    setAccount(null);
+    setFarmUsers([]);
+    setTicketLogs([]);
+    setBins([]);
+    setContracts([]);
+    setDrivers([]);
+    setLocations([]);
+    setDropdowns({ bins: [], haulers: [], destinations: [], missing_tabs: [] });
+    setDashboard(emptyDashboard());
+    resetForNextTicket();
+    setActiveView('dashboard');
+    setAuthStatus('Your account has been deleted.');
   }
 
   function startEditingTicket(log) {
@@ -1844,80 +1829,6 @@ function App() {
     );
   }
 
-  function renderAccountDeletionPanel() {
-    const eligibility = accountDeletion?.eligibility;
-    const accountEmail = account?.email || session?.user?.email || '';
-    const canDelete = eligibility?.allowed && deleteConfirmEmail.trim().toLowerCase() === accountEmail.trim().toLowerCase();
-
-    return (
-      <section className="account-deletion-panel">
-        <div className="form-heading compact-heading">
-          <h3>Delete My Account</h3>
-          <p>
-            Delete your BinFlow login and remove your access to this farm. Historical farm records may be retained or anonymized
-            where needed for operational, accounting, legal, or dispute-resolution purposes.
-          </p>
-        </div>
-
-        {!accountDeletion ? (
-          <button className="secondary-button" type="button" onClick={loadAccountDeletion} disabled={isLoadingDeletion}>
-            {isLoadingDeletion ? 'Checking...' : 'Review Deletion Options'}
-          </button>
-        ) : (
-          <form className="delete-account-form" onSubmit={deleteMyAccount}>
-            <div className={eligibility?.allowed ? 'notice warning' : 'notice danger'}>
-              <strong>{eligibility?.allowed ? 'Deletion can continue.' : 'Action needed before deletion.'}</strong>
-              <p>{eligibility?.reason}</p>
-              {eligibility?.retention && <p>{eligibility.retention}</p>}
-              {accountDeletion.member_count !== undefined && (
-                <p>
-                  Farm members: {accountDeletion.member_count}. Farm administrators: {accountDeletion.admin_count}.
-                </p>
-              )}
-            </div>
-
-            {eligibility?.transfer_required && (
-              <p className="field-help">
-                Create or promote another administrator before deleting your account. This prevents the farm from being left without an owner.
-              </p>
-            )}
-
-            <label className="field">
-              <span>Confirm Email</span>
-              <input
-                type="email"
-                value={deleteConfirmEmail}
-                onChange={(event) => setDeleteConfirmEmail(event.target.value)}
-                placeholder={accountEmail}
-                disabled={!eligibility?.allowed || isDeletingAccount}
-              />
-            </label>
-
-            <div className="modal-actions">
-              <button
-                className="danger-button"
-                type="submit"
-                disabled={!canDelete || isDeletingAccount}
-              >
-                {isDeletingAccount ? 'Deleting...' : 'Delete My Account'}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={loadAccountDeletion}
-                disabled={isLoadingDeletion || isDeletingAccount}
-              >
-                Refresh Status
-              </button>
-            </div>
-          </form>
-        )}
-
-        {deleteAccountStatus && <div className="notice">{deleteAccountStatus}</div>}
-      </section>
-    );
-  }
-
   if (!isAuthReady) {
     return (
       <main className="auth-shell">
@@ -2004,6 +1915,7 @@ function App() {
             <span>{account.display_name || session.user?.email}</span>
             <small className="account-role">{isAdmin ? 'Administrator' : 'Employee scanner'}</small>
           </div>
+          <button type="button" className="account-settings-button" aria-current={activeView === 'settings' ? 'page' : undefined} onClick={() => setActiveView('settings')}>Settings</button>
           <button type="button" onClick={logout}>Log Out</button>
         </div>
       </section>
@@ -2072,11 +1984,17 @@ function App() {
             loadLocations();
           }}
         >
-          Locations, Users, and Drivers
+          Farm Setup
         </button>
       </nav>}
 
-      {renderAccountDeletionPanel()}
+      {activeView === 'settings' && <AccountSettings
+        account={{ ...account, email: session.user?.email || account.email }}
+        farm={farm}
+        apiFetch={apiFetch}
+        onDeleted={finishAccountDeletion}
+        onBack={() => setActiveView(isEmployee ? 'scanner' : 'dashboard')}
+      />}
 
       {isAdmin && activeView === 'dashboard' && (
         <section className="dashboard-view">

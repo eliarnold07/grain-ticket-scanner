@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
-import { accountDeletionEligibility } from './accountDeletionPolicy.js';
+import { AccountDeletionError, performAccountDeletion } from './accountDeletionService.js';
 import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
 
 const requestContext = new AsyncLocalStorage();
@@ -33,10 +33,12 @@ async function rawRequest(path, { token, method = 'GET', body, prefer, serviceRo
 
   const response = await fetch(`${supabaseUrl}${path}`, {
     method,
+    signal: AbortSignal.timeout(30000),
     headers: {
       apikey: apiKey,
       Authorization: `Bearer ${authorization}`,
       'Content-Type': 'application/json',
+      ...(serviceRole && requestContext.getStore()?.user?.id ? { 'X-BinFlow-Actor': requestContext.getStore().user.id } : {}),
       ...(prefer ? { Prefer: prefer } : {})
     },
     body: body === undefined ? undefined : JSON.stringify(body)
@@ -173,6 +175,12 @@ export async function getWeeklySummaryDelivery(farmId, periodEnd) {
 }
 
 export async function recordWeeklySummaryDelivery(input) {
+  try {
+    return await serviceDb('rpc/binflow_record_summary', { method: 'POST', body: { p_input: input } });
+  } catch (error) {
+    // Only the pre-migration missing-function response permits legacy recording.
+    if (error.code !== 'PGRST202') throw error;
+  }
   const rows = await serviceDb('weekly_summary_deliveries', {
     method: 'POST',
     prefer: 'return=representation',
@@ -190,64 +198,13 @@ function normalizeFarmRole(value) {
 }
 
 async function attachUserToFarm(user, { farmId, displayName, email, role }) {
-  const farmRole = normalizeFarmRole(role);
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${user.id}&limit=1`
-  );
-  const existingMembership = memberships[0];
-  const orphanFarmId = existingMembership?.farm_id && existingMembership.farm_id !== farmId
-    ? existingMembership.farm_id
-    : null;
-
-  await rawRequest(`/auth/v1/admin/users/${user.id}`, {
-    method: 'PUT',
-    serviceRole: true,
-    body: {
-      app_metadata: {
-        ...(user.app_metadata || {}),
-        farm_id: farmId,
-        farm_role: farmRole
-      },
-      user_metadata: {
-        ...(user.user_metadata || {}),
-        display_name: displayName
-      }
-    }
-  });
-
-  if (existingMembership) {
-    await db(`farm_accounts?user_id=eq.${user.id}`, { method: 'DELETE' });
-  }
-
-  const rows = await db('farm_accounts', {
+  return serviceDb('rpc/binflow_attach_member', {
     method: 'POST',
-    prefer: 'return=representation',
     body: {
-      user_id: user.id,
-      farm_id: farmId,
-      role: farmRole,
-      display_name: displayName,
-      email,
-      updated_at: new Date().toISOString()
+      p_actor: context().user.id, p_target: user.id, p_farm: farmId,
+      p_name: displayName, p_email: email, p_role: normalizeFarmRole(role)
     }
   });
-  const attached = rows[0];
-
-  if (!attached || attached.farm_id !== farmId || attached.role !== farmRole) {
-    throw new Error('User login was created, but its farm membership could not be verified.');
-  }
-
-  if (orphanFarmId) {
-    const remainingMembers = await db(
-      `farm_accounts?select=user_id&farm_id=eq.${orphanFarmId}&limit=1`
-    );
-
-    if (remainingMembers.length === 0) {
-      await db(`farms?id=eq.${orphanFarmId}`, { method: 'DELETE' });
-    }
-  }
-
-  return attached;
 }
 
 async function findAuthUserByEmail(email) {
@@ -266,99 +223,62 @@ async function farmHasOperationalData(farmId) {
   return results.some((rows) => rows.length > 0);
 }
 
-async function anonymizeUserReferences(userId, farmId) {
-  await Promise.all([
-    db(`tickets?farm_id=eq.${farmId}&scanned_by_user_id=eq.${userId}`, {
-      method: 'PATCH',
-      body: {
-        scanned_by_user_id: null,
-        scanned_by_name: 'Deleted account'
-      }
-    }).catch(() => []),
-    db(`farm_promotions?farm_id=eq.${farmId}&created_by_user_id=eq.${userId}`, {
-      method: 'PATCH',
-      body: {
-        created_by_user_id: null
-      }
-    }).catch(() => [])
-  ]);
-}
-
-async function accountDeletionSnapshot() {
-  const { farmId, member, farm } = context();
-  const [members, hasOperationalData] = await Promise.all([
-    db(`farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&farm_id=eq.${farmId}&order=created_at.asc`),
-    farmHasOperationalData(farmId)
-  ]);
-
-  return {
-    farm,
-    account: member,
-    members,
-    hasOperationalData,
-    eligibility: accountDeletionEligibility({
-      account: member,
-      farm,
-      members,
-      hasOperationalData
-    })
-  };
+async function deletionAvailability() {
+  if (String(process.env.ACCOUNT_DELETION_ENABLED || '').toLowerCase() !== 'true' || !supabaseServiceRoleKey) return false;
+  try {
+    // A flag alone must never reactivate the unsafe multi-request implementation.
+    const capability = await serviceDb('rpc/binflow_account_deletion_capability', { method: 'POST', body: {} });
+    return capability?.version === 2;
+  } catch {
+    return false;
+  }
 }
 
 export async function getAccountDeletionPreview() {
-  const snapshot = await accountDeletionSnapshot();
-
-  return {
-    farm: snapshot.farm,
-    account: snapshot.account,
-    eligibility: snapshot.eligibility,
-    member_count: snapshot.members.length,
-    admin_count: snapshot.members.filter((member) => member.role === 'admin').length,
-    has_operational_data: snapshot.hasOperationalData
-  };
+  if (!await deletionAvailability()) throw new AccountDeletionError('DELETION_UNAVAILABLE', 503);
+  const { farmId, user } = context();
+  try {
+    const preview = await serviceDb('rpc/binflow_preview_account_deletion', {
+      method: 'POST', body: { p_actor: user.id, p_farm: farmId }
+    });
+    if (preview?.version !== 2) throw new Error('Unsupported deletion protocol.');
+    return { ...preview, deletion_available: true };
+  } catch { throw new AccountDeletionError('DELETION_UNAVAILABLE', 503); }
 }
 
-export async function deleteCurrentAccount({ confirmEmail } = {}) {
-  if (String(process.env.ACCOUNT_DELETION_ENABLED || '').toLowerCase() !== 'true') {
-    const error = new Error('Account deletion is not enabled yet. Contact support to complete this request.');
-    error.status = 403;
-    throw error;
-  }
-
-  const snapshot = await accountDeletionSnapshot();
-  const { farmId, user, member } = context();
-  const expectedEmail = clean(member.email || user.email).toLowerCase();
-  const submittedEmail = clean(confirmEmail).toLowerCase();
-
-  if (!supabaseServiceRoleKey) throw new Error('Account deletion requires SUPABASE_SERVICE_ROLE_KEY.');
-  if (!submittedEmail || submittedEmail !== expectedEmail) {
-    throw new Error('Enter your account email exactly to confirm deletion.');
-  }
-  if (!snapshot.eligibility.allowed) {
-    const error = new Error(snapshot.eligibility.reason);
-    error.status = 409;
-    error.eligibility = snapshot.eligibility;
-    throw error;
-  }
-
-  await anonymizeUserReferences(user.id, farmId);
-  await db(`farm_accounts?user_id=eq.${user.id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-
-  if (snapshot.eligibility.action === 'delete_empty_farm') {
-    await db(`farms?id=eq.${farmId}`, { method: 'DELETE' });
-  }
-
-  await rawRequest(`/auth/v1/admin/users/${user.id}`, {
-    method: 'DELETE',
-    serviceRole: true
+export async function deleteCurrentAccount(input = {}) {
+  const { farmId, user } = context();
+  return performAccountDeletion({
+    input,
+    authenticatedUser: user,
+    farmId,
+    available: await deletionAvailability(),
+    reauthenticate: async (email, password) => {
+      let verified;
+      try {
+        verified = await rawRequest('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password } });
+        return verified?.user;
+      } catch {
+        throw new AccountDeletionError('REAUTHENTICATION_FAILED', 403);
+      } finally {
+        if (verified?.access_token) {
+          await rawRequest('/auth/v1/logout?scope=local', { token: verified.access_token, method: 'POST' }).catch(() => {});
+        }
+      }
+    },
+    executeAtomic: async ({ userId, farmId: targetFarm, confirmEmail, successorId }) => {
+      try {
+        return await serviceDb('rpc/binflow_delete_account', {
+          method: 'POST',
+          body: { p_user_id: userId, p_farm_id: targetFarm, p_confirm_email: confirmEmail, p_successor: successorId }
+        });
+      } catch (error) {
+        const codes = ['OWNERSHIP_TRANSFER_REQUIRED', 'INVALID_SUCCESSOR', 'STORAGE_CLEANUP_REQUIRED', 'DELETION_SCHEMA_REVIEW_REQUIRED', 'FARM_MEMBERSHIP_CHANGED', 'LAST_ADMIN_REQUIRED'];
+        const code = codes.includes(error.message) ? error.message : 'DELETION_FAILED';
+        throw new AccountDeletionError(code, code === 'DELETION_FAILED' ? 503 : 409);
+      }
+    }
   });
-
-  return {
-    deleted: true,
-    action: snapshot.eligibility.action,
-    farm_closed: snapshot.eligibility.farm_closure === true,
-    retained_records: Boolean(snapshot.hasOperationalData)
-  };
 }
 
 export async function createFarmUserAccount(input) {
@@ -387,7 +307,8 @@ export async function createFarmUserAccount(input) {
       },
       app_metadata: {
         farm_id: farmId,
-        farm_role: farmRole
+        binflow_provisioner_id: context().user.id,
+        farm_role: 'employee'
       }
     }
   });
@@ -405,39 +326,10 @@ export async function updateFarmUserRole(userId, requestedRole) {
   if (role !== 'admin') throw new Error('Only farm admins can change user roles.');
   if (!supabaseServiceRoleKey) throw new Error('Role changes require SUPABASE_SERVICE_ROLE_KEY.');
 
-  const farmRole = normalizeFarmRole(requestedRole);
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email&user_id=eq.${userId}&farm_id=eq.${farmId}&limit=1`
-  );
-  const membership = memberships[0];
-  if (!membership) throw new Error('Farm user not found.');
-  if (membership.role === farmRole) return membership;
-
-  const user = await findAuthUserByEmail(clean(membership.email).toLowerCase());
-  if (!user || user.id !== userId) throw new Error('The matching login could not be found.');
-
-  await rawRequest(`/auth/v1/admin/users/${userId}`, {
-    method: 'PUT',
-    serviceRole: true,
-    body: {
-      app_metadata: {
-        ...(user.app_metadata || {}),
-        farm_id: farmId,
-        farm_role: farmRole
-      }
-    }
+  return serviceDb('rpc/binflow_change_member', {
+    method: 'POST',
+    body: { p_actor: context().user.id, p_target: userId, p_role: normalizeFarmRole(requestedRole) }
   });
-
-  const rows = await db(`farm_accounts?user_id=eq.${userId}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: {
-      role: farmRole,
-      updated_at: new Date().toISOString()
-    }
-  });
-  if (!rows[0]) throw new Error('The user role could not be updated.');
-  return rows[0];
 }
 
 export async function repairEmployeeAccount(input) {

@@ -4,6 +4,7 @@ import cors from 'cors';
 import multer from 'multer';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
+import { accountDeletionRouter } from './accountDeletionRoutes.js';
 import {
   addTicketLog,
   createBin,
@@ -375,30 +376,11 @@ app.get('/api/session', async (_req, res) => {
   });
 });
 
-app.get('/api/account-deletion', async (_req, res) => {
-  try {
-    res.json(await getAccountDeletionPreview());
-  } catch (error) {
-    logError('Account deletion preview failed', error);
-    res.status(500).json({
-      error: 'Could not prepare account deletion details.',
-      detail: error.message
-    });
-  }
-});
-
-app.delete('/api/account', async (req, res) => {
-  try {
-    res.json(await deleteCurrentAccount(req.body || {}));
-  } catch (error) {
-    logError('Account deletion failed', error);
-    res.status(error.status || 400).json({
-      error: 'Could not delete this account.',
-      detail: error.message,
-      eligibility: error.eligibility
-    });
-  }
-});
+app.use('/api', accountDeletionRouter({
+  preview: getAccountDeletionPreview,
+  remove: deleteCurrentAccount,
+  report: (code) => console.error('Account request failed:', code)
+}));
 
 app.get('/api/dropdowns', async (_req, res) => {
   try {

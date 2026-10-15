@@ -204,7 +204,7 @@ Use a dedicated test farm. Avoid destructive actions on real farm data.
 - Contract assignment works with a test contract.
 - Bin/field assignment works with test data.
 - Account deletion preview loads.
-- Account deletion submit is blocked unless backend `ACCOUNT_DELETION_ENABLED=true`.
+- Settings > Account > Delete account is separate from the dashboard. Submit remains blocked unless the backend flag AND the reviewed atomic deletion capability are available. See `account-deletion-implementation.md`; do not enable the flag without the separately approved database/staging gates.
 - Network failure shows a useful message.
 
 ## 16. Account Deletion Schema Inspection Queries
@@ -273,7 +273,7 @@ union all
 select 'farm_accounts', count(*) from farm_accounts where farm_id = '<farm-id>';
 ```
 
-Production blocker: do not enable `ACCOUNT_DELETION_ENABLED=true` until these queries confirm the schema supports the anonymization/deletion workflow or an approved migration has been deployed.
+Production blocker: do not enable `ACCOUNT_DELETION_ENABLED=true` until these queries confirm compatibility, the proposed atomic database workflow is separately approved/applied, and real staging Auth/rollback/concurrency tests pass. See `account-deletion-implementation.md`; the old sequential deletion implementation is removed.
 
 ## 17. Prepare TestFlight After Device Testing
 

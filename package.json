@@ -14,6 +14,9 @@
     "build:mobile": "vite build --mode mobile --config vite.mobile.config.js",
     "preview": "vite preview --host 0.0.0.0",
     "check:mobile-bundle": "node scripts/check-mobile-bundle.js",
+    "check:account-sql": "node scripts/check-account-deletion-sql.mjs",
+    "check:account-concurrency": "node scripts/check-account-concurrency.mjs",
+    "check:account-staging": "node scripts/check-account-staging.mjs",
     "cap:sync": "npm run build:mobile && cap sync",
     "cap:sync:ios": "npm run build:mobile && cap sync ios",
     "cap:open:ios": "cap open ios",
@@ -33,8 +36,10 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",
+    "@electric-sql/pglite": "^0.5.10",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.0",
+    "pg": "^8.23.1",
     "vite": "^7.0.0"
   }
 }
