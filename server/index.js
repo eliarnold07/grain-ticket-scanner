@@ -5,20 +5,23 @@ import multer from 'multer';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import { accountDeletionRouter } from './accountDeletionRoutes.js';
+import { registerFarmInvitationRoutes } from './farmInvitationRoutes.js';
+import { settingsNamesRoutes } from './settingsNamesRoutes.js';
+import { requireUuid, validateApiIds } from './restQuery.js';
+import { farmPermissionGuard } from './farmPermissions.js';
 import {
   addTicketLog,
+  farmFeatureRpc,
+  authenticateJoinRequest,
+  signupInvitedUser,
   createBin,
   createContract,
-  createDriver,
   createFarmUserAccount,
-  createLocation,
   deleteCurrentAccount,
   createInventoryTransaction,
   createTicketSaleTransaction,
   deleteBin,
   deleteContract,
-  deleteDriver,
-  deleteLocation,
   deleteInventoryTransaction,
   deleteTicketLog,
   deleteTicketLogByInventoryTransactionId,
@@ -113,33 +116,24 @@ app.use(cors({
       return;
     }
 
-    callback(new Error('This website is not allowed to access the BinFlow API.'));
+    const error = new Error('Origin not allowed.');
+    error.code = 'CORS_BLOCKED';
+    callback(error);
   }
 }));
 app.use(express.json({ limit: '2mb' }));
+app.param('id', (_req, res, next, id) => {
+  try { requireUuid(id); next(); } catch { res.status(400).json({ code: 'INVALID_ID' }); }
+});
+app.use('/api', validateApiIds);
 app.use('/api', requireSupabaseAuth);
 app.use('/api', requireFarmEntitlement);
 
-const employeeRoutes = new Set([
-  'GET /session',
-  'GET /account-deletion',
-  'GET /dropdowns',
-  'GET /scanner-contracts',
-  'DELETE /account',
-  'POST /extract-ticket',
-  'POST /submit-ticket'
-]);
+app.use('/api', farmPermissionGuard(currentAccount));
 
-app.use('/api', (req, res, next) => {
-  if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
-
-  const account = currentAccount();
-  if (account?.role === 'admin') return next();
-
-  const routeKey = `${req.method} ${req.path}`;
-  if (account?.role === 'employee' && employeeRoutes.has(routeKey)) return next();
-
-  return res.status(403).json({ error: 'Admin access is required for this action.' });
+registerFarmInvitationRoutes(app, {
+  rpc: farmFeatureRpc, authenticate: authenticateJoinRequest,
+  signup: signupInvitedUser, requestAccount: () => currentAccount()
 });
 
 function blankTicket() {
@@ -672,31 +666,7 @@ app.get('/api/drivers', async (_req, res) => {
   }
 });
 
-app.post('/api/drivers', async (req, res) => {
-  try {
-    const driver = await createDriver(req.body || {});
-    res.status(201).json({ driver });
-  } catch (error) {
-    logError('Driver create failed', error);
-    res.status(400).json({
-      error: 'Could not create driver.',
-      detail: error.message
-    });
-  }
-});
-
-app.delete('/api/drivers/:id', async (req, res) => {
-  try {
-    await deleteDriver(req.params.id);
-    res.json({ ok: true });
-  } catch (error) {
-    logError('Driver delete failed', error);
-    res.status(400).json({
-      error: 'Could not delete driver.',
-      detail: error.message
-    });
-  }
-});
+settingsNamesRoutes(app, { command: farmFeatureRpc, account: currentAccount });
 
 app.get('/api/locations', async (_req, res) => {
   try {
@@ -706,32 +676,6 @@ app.get('/api/locations', async (_req, res) => {
     logError('Location fetch failed', error);
     res.status(500).json({
       error: 'Could not load locations.',
-      detail: error.message
-    });
-  }
-});
-
-app.post('/api/locations', async (req, res) => {
-  try {
-    const location = await createLocation(req.body || {});
-    res.status(201).json({ location });
-  } catch (error) {
-    logError('Location create failed', error);
-    res.status(400).json({
-      error: 'Could not create location.',
-      detail: error.message
-    });
-  }
-});
-
-app.delete('/api/locations/:id', async (req, res) => {
-  try {
-    await deleteLocation(req.params.id);
-    res.json({ ok: true });
-  } catch (error) {
-    logError('Location delete failed', error);
-    res.status(400).json({
-      error: 'Could not delete location.',
       detail: error.message
     });
   }
@@ -1014,6 +958,13 @@ app.post('/api/submit-ticket', async (req, res) => {
       ticket_bushels: error.ticketBushels
     });
   }
+});
+
+app.use('/api', (_req, res) => res.status(404).json({ error: 'This feature is temporarily unavailable.' }));
+app.use((error, _req, res, _next) => {
+  if (error.code === 'CORS_BLOCKED') return res.status(403).json({ error: 'Origin not allowed.' });
+  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Choose a smaller ticket photo.' });
+  return res.status(error.type === 'entity.parse.failed' ? 400 : 500).json({ error: 'We could not complete that request. Please try again.' });
 });
 
 app.listen(port, () => {

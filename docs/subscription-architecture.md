@@ -267,6 +267,8 @@ Expiration policy should distinguish active operational access from historical r
 
 ## Safe Activation Path
 
+The release candidate Settings landing deliberately has no subscription row until an actual server-advertised farm billing-management capability exists. That future Admin-only destination belongs beside farm management; Employees continue to share farm entitlements without a purchase button. A not_configured scaffold is not a permanent complimentary entitlement, trial claim or pricing commitment. Billing remains disabled in this phase.
+
 1. Add tables and backend entitlement resolver.
 2. Return entitlement summary from `/api/session`.
 3. Add admin-only billing state display.

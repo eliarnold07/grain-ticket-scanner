@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
 import { AccountDeletionError, performAccountDeletion } from './accountDeletionService.js';
 import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
+import { canonicalRestPath } from './restQuery.js';
 
 const requestContext = new AsyncLocalStorage();
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -57,10 +58,31 @@ async function rawRequest(path, { token, method = 'GET', body, prefer, serviceRo
 }
 
 function serviceDb(path, options = {}) {
-  return rawRequest(`/rest/v1/${path}`, {
+  return rawRequest(`/rest/v1/${canonicalRestPath(path)}`, {
     ...options,
     serviceRole: true
   });
+}
+
+export function farmFeatureRpc(name, body) {
+  if (!/^[a-z_]+$/.test(name)) throw new Error('Invalid command.');
+  return serviceDb(`rpc/${name}`, { method: 'POST', body });
+}
+
+export async function authenticateJoinRequest(authorization) {
+  const token = clean(authorization).replace(/^Bearer\s+/i, '');
+  if (!token) { const error = new Error('Authentication required'); error.status = 401; throw error; }
+  try { return await rawRequest('/auth/v1/user', { token }); }
+  catch { const error = new Error('Invalid authentication'); error.status = 401; throw error; }
+}
+
+export function signupInvitedUser(body) {
+  return rawRequest('/auth/v1/signup', { method: 'POST', body });
+}
+
+export function isPublicInvitationRequest(req) {
+  if (req.method === 'GET' && req.path === '/app-capabilities') return true;
+  return req.method === 'POST' && ['/farm-invites/preview', '/farm-invites/register', '/farm-invites/accept'].includes(req.path);
 }
 
 async function buildContext(accessToken) {
@@ -76,6 +98,7 @@ async function buildContext(accessToken) {
   }
 
   const membership = accounts[0];
+  if (!['admin', 'employee'].includes(membership.role)) throw new Error('Invalid farm role.');
   const farms = await rawRequest(
     `/rest/v1/farms?select=id,name&id=eq.${membership.farm_id}&limit=1`,
     { token: accessToken, serviceRole: useServiceRole }
@@ -97,6 +120,7 @@ async function buildContext(accessToken) {
 }
 
 export async function requireSupabaseAuth(req, res, next) {
+  if (isPublicInvitationRequest(req)) return next();
   if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
 
   const token = clean(req.get('authorization')).replace(/^Bearer\s+/i, '');
@@ -136,7 +160,7 @@ function context() {
 }
 
 async function db(path, options = {}) {
-  return rawRequest(`/rest/v1/${path}`, {
+  return rawRequest(`/rest/v1/${canonicalRestPath(path, context().farmId)}`, {
     ...options,
     token: context().token,
     serviceRole: Boolean(supabaseServiceRoleKey)
@@ -228,7 +252,7 @@ async function deletionAvailability() {
   try {
     // A flag alone must never reactivate the unsafe multi-request implementation.
     const capability = await serviceDb('rpc/binflow_account_deletion_capability', { method: 'POST', body: {} });
-    return capability?.version === 2;
+    return capability?.version === 2 && capability?.revision === 1;
   } catch {
     return false;
   }

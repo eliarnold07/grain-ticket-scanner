@@ -44,3 +44,15 @@ export function loadMobileEnv(root = process.cwd(), mode = 'mobile') {
   if (mode !== 'mobile') throw new Error('Use npm run build:mobile (Vite mode mobile) for the Capacitor build.');
   return validateMobileEnv(loadEnv(mode, root, 'VITE_'));
 }
+
+export async function verifyOpaquePublicKey(config, fetcher = fetch) {
+  if (!config.publicKey.startsWith('sb_publishable_')) return;
+  // Opaque publishable keys have no locally inspectable project claim.
+  let response;
+  try {
+    response = await fetcher(`${PRODUCTION_SUPABASE_URL}/auth/v1/settings`, {
+      headers: { apikey: config.publicKey }, signal: AbortSignal.timeout(15000)
+    });
+  } catch { throw new Error('Could not verify the public key against production Supabase. Check your connection and retry. No key values printed.'); }
+  if (!response.ok) throw new Error('Production Supabase did not accept this public key. Configure the production project public key locally. No key values printed.');
+}

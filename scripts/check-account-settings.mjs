@@ -28,10 +28,13 @@ try {
   const base = `http://127.0.0.1:${server.httpServer.address().port}`;
   browser = await chromium.launch({ channel: process.env.BINFLOW_BROWSER_CHANNEL || 'chrome', headless: true, timeout: 30000 });
   console.log('Isolated headless browser started.');
-  for (const [width, height] of [[320, 740], [390, 844], [768, 1024], [1280, 900]]) {
+  for (const [width, height] of [[320, 740], [390, 844], [430, 932], [768, 1024], [1280, 900]]) {
     for (const role of ['admin', 'employee']) {
       const context = await browser.newContext({ viewport: { width, height } });
       const page = await context.newPage();
+      page.setDefaultTimeout(30000);
+      page.on('requestfailed', request => console.log('Fictional request failed:', new URL(request.url()).pathname));
+      console.log(`Checking ${width}px ${role}.`);
       const account = { user_id: '00000000-0000-4000-8000-000000000001', role, display_name: 'Fictional Reviewer', email: 'review@example.invalid' };
       const session = { access_token: 'fictional-session', refresh_token: 'fictional-refresh', expires_at: 4102444800, user: { id: account.user_id, email: account.email } };
       let previewMode = 'html';
@@ -39,6 +42,8 @@ try {
       let deletes = 0;
       let archivesFarm = false;
       const successor='00000000-0000-4000-8000-000000000006';
+      const longName='Fictional North River Agricultural Partnership and Extended Grain Storage';
+      const saved={locations:[{id:successor,name:longName}],drivers:[{id:successor,name:'Fictional Driver With A Long Display Name'}]};
       const errors = [];
       const testLateRefresh=width===390 && role==='employee';
       let forceRefresh=testLateRefresh;
@@ -48,7 +53,7 @@ try {
       const started=new Promise(resolve=>{refreshStarted=resolve;});
       const finished=new Promise(resolve=>{refreshFinished=resolve;});
       const blockedRefresh=new Promise(resolve=>{releaseRefresh=resolve;});
-      page.on('pageerror', error => errors.push(error.message));
+      page.on('pageerror', error => { errors.push(error.message); console.log('Fictional browser error:', error.message); });
       await page.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.origin === base) return route.continue();
@@ -63,7 +68,8 @@ try {
         }
         if (url.origin === auth && url.pathname === '/auth/v1/logout') return json({});
         if (url.origin !== api) throw new Error(`Unexpected remote request to ${url.origin}; blocked.`);
-        if (url.pathname === '/api/session') return json({ account, farm: { id: '00000000-0000-4000-8000-000000000002', name: 'Fictional Test Farm' } });
+        if (url.pathname === '/api/app-capabilities') return json({farm_invitations:true});
+        if (url.pathname === '/api/session') return json({ account, farm: { id: '00000000-0000-4000-8000-000000000002', name: longName } });
         if (url.pathname === '/api/account-deletion') {
           previewRequests++;
           if (previewMode === 'html') return route.fulfill({ status: 404, contentType: 'text/html', body: '<html>Cannot GET /api/account-deletion secret-diagnostic</html>' });
@@ -88,36 +94,109 @@ try {
           if(forceRefresh){forceRefresh=false;return route.fulfill({status:401,contentType:'application/json',body:'{}'});}
           return json({ bins: [], haulers: [], destinations: [] });
         }
-        if (url.pathname === '/api/ticket-logs') return json({ logs: [] });
-        if (url.pathname === '/api/bins') return json({ bins: [], transactions: [] });
-        if (url.pathname === '/api/contracts' || url.pathname === '/api/scanner-contracts') return json({ contracts: [] });
+        if (url.pathname === '/api/ticket-logs') return json({ logs: [{id:successor,ticket_number:'FICTIONAL-100',date:'2026-10-14',crop:'Corn',bushels:700,delivered_to:longName,hauled_from:'Field',hauled_by:'Fictional Driver',assignment_status:'Spot',assignments:[],payment_status:'Not paid'}] });
+        if (url.pathname === '/api/bins') return json({ bins: [{id:successor,bin_name:longName,crop_type:'Corn',current_bushels:300,estimated_capacity_bushels:1000,percent_full:30,recent_transactions:[],updated_at:'2026-10-14T12:00:00Z'}], transactions: [] });
+        if (url.pathname === '/api/contracts' || url.pathname === '/api/scanner-contracts') return json({ contracts: [{id:successor,contract_id:'FICTIONAL-CORN-1',buyer:longName,commodity:'Corn',contracted_bushels:1000,delivered_bushels:700,remaining_bushels:300,contract_price:4.25,status:'Open'}] });
+        if (url.pathname === '/api/extract-ticket') return json({ticket:{ticket_number:'FICTIONAL-SCAN-101',date:'2026-10-15',crop:'Corn',bushels:'100',hauled_from:'Field',delivered_to:'Fictional Elevator',hauled_by:'Fictional Driver'},duplicate:{is_duplicate:false,message:'No duplicate found.'}});
+        if (url.pathname === '/api/submit-ticket') {
+          assert.equal(route.request().postDataJSON().ticket.ticket_number,'FICTIONAL-SCAN-101');
+          return json({ok:true,message:'Fictional saved'});
+        }
         if (url.pathname === '/api/users') return json({ users: [] });
-        if (url.pathname === '/api/drivers') return json({ drivers: [] });
-        if (url.pathname === '/api/locations') return json({ locations: [] });
+        if (url.pathname === '/api/users/invitation') return json({code:'ABCD-EFGH-JKLM-NPQR-STUV'});
+        if (url.pathname === '/api/users/invitation/rotate') return json({code:'WXYZ-2345-6789-ABCD-EFGH'});
+        const names=url.pathname.match(/^\/api\/(drivers|locations)(?:\/([^/]+))?$/);
+        if(names) {
+          const [,kind,id]=names;
+          assert.equal(role,'admin','Employee must never request management routes');
+          const method=route.request().method();
+          if(method==='GET') return json({[kind]:saved[kind]});
+          if(method==='PUT') saved[kind]=saved[kind].map(item=>item.id===id?{...item,name:route.request().postDataJSON().name}:item);
+          if(method==='POST') saved[kind].push({id:'00000000-0000-4000-8000-000000000007',name:route.request().postDataJSON().name});
+          if(method==='DELETE') saved[kind]=saved[kind].filter(item=>item.id!==id);
+          return json({ok:true});
+        }
         throw new Error(`Unexpected fictional API path ${url.pathname}`);
       });
-      await page.goto(`${base}/app/`);
+      await page.goto(`${base}/app/`, {waitUntil:'domcontentloaded',timeout:60000});
       await page.getByLabel('Email', { exact: true }).fill(account.email);
       await page.getByLabel('Password', { exact: true }).fill('fictional-password');
       await page.getByRole('button', { name: 'Log In', exact: true }).last().click();
-      await page.getByRole('button', { name: 'Settings', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Settings', exact: true }).waitFor().catch(async error => {
+        console.log('Fictional login diagnostics:', await page.locator('body').innerText(), errors);
+        throw error;
+      });
+      console.log('Login complete.');
+      if(width===390 && role==='admin') {
+        await page.reload({waitUntil:'domcontentloaded'});
+        await page.getByRole('button',{name:'Settings',exact:true}).waitFor();
+        assert.equal(await page.getByRole('heading',{name:'Welcome back',exact:true}).count(),0,'Persisted session must survive reload');
+        await context.setOffline(true);
+        await page.getByText('You are offline. Reconnect before scanning or saving changes.',{exact:true}).waitFor();
+        await context.setOffline(false);
+        await page.getByText('You are offline. Reconnect before scanning or saving changes.',{exact:true}).waitFor({state:'hidden'});
+      }
       if(testLateRefresh) await started;
       assert.equal(await page.evaluate(() => {
         const brand = document.querySelector('.header-band .brand-lockup span').getBoundingClientRect();
-        const settings = document.querySelector('.account-settings-button').getBoundingClientRect();
+        const settings = document.querySelector('.account-tools button').getBoundingClientRect();
         return brand.right <= settings.left - 4;
       }), true, 'Brand and account controls must not overlap');
       assert.equal(await page.getByRole('button', { name: 'Delete account', exact: true }).count(), 0);
       assert.equal(previewRequests, 0, 'Dashboard must not request deletion eligibility');
       if (role === 'admin') {
-        for (const [name, selector] of [['Bins', '.inventory-panel'], ['Contracts', '.contracts-panel'], ['History', '.history-panel'], ['Farm Setup', '.users-panel'], ['Dashboard', '.dashboard-view']]) {
+        for (const [name, selector] of [['Bins', '.inventory-panel'], ['Contracts', '.contracts-panel'], ['History', '.history-panel'], ['Dashboard', '.dashboard-view'], ['Scan','.capture-panel']]) {
           await page.getByRole('button', { name, exact: true }).click();
           await page.locator(selector).waitFor();
+          assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${name} overflow at ${width}`);
         }
       } else {
         await page.locator('.capture-panel').waitFor();
       }
+      await page.locator('input[type=file]').setInputFiles('src/assets/binflow-mark.png');
+      assert.equal(await page.getByRole('button',{name:'Extract Ticket Data',exact:true}).isDisabled(),true,'No ticket image may be sent before explicit AI processing consent');
+      await page.getByLabel('I agree to send this ticket photo to OpenAI through BinFlow to extract ticket details.').check();
+      await page.getByRole('button',{name:'Extract Ticket Data',exact:true}).click();
+      await page.getByText('Extraction complete. Review every field before submitting.',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'Submit Reviewed Ticket',exact:true}).waitFor();
+      await page.getByLabel('Ticket number',{exact:true}).waitFor();
+      assert.equal(await page.getByLabel('Ticket number',{exact:true}).inputValue(),'FICTIONAL-SCAN-101');
+      for(const [label,value] of [['Hauled From','Field'],['Hauled By','Fictional Driver']]) {
+        const field=page.locator('.review-form label.field').filter({hasText:new RegExp(`^${label}`)});
+        await field.locator('select').selectOption('__other__');
+        await field.locator('input.other-input').fill(value);
+      }
+      await page.getByLabel('Moisture',{exact:true}).fill('15.1');
+      await page.getByRole('button',{name:'Submit Reviewed Ticket',exact:true}).click();
+      await page.getByRole('heading',{name:'Ticket submitted successfully',exact:true}).waitFor();
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await page.getByRole('heading', {name:'Settings',exact:true}).waitFor();
+      await page.screenshot({path:join(screenshots,`${width}-${role}-settings.png`)});
+      if(role==='admin') {
+        for(const [kind,title] of [['locations','Locations'],['drivers','Drivers']]) {
+          await page.getByRole('button',{name:new RegExp(`^${title}`)}).click();
+          await page.getByRole('heading',{name:title,exact:true}).waitFor();
+          await page.getByRole('button',{name:/^Edit /}).first().click();
+          await page.getByLabel(`Edit ${kind==='locations'?'location':'driver'} name`).fill('Fictional Updated Name');
+          await page.getByRole('button',{name:'Save Changes',exact:true}).click();
+          await page.locator('.saved-names-list li > span').filter({hasText:'Fictional Updated Name'}).waitFor();
+          await page.getByLabel(`New ${kind==='locations'?'location':'driver'} name`).fill('Fictional Additional Name');
+          await page.getByRole('button',{name:`Add ${kind==='locations'?'Location':'Driver'}`,exact:true}).click();
+          await page.locator('.saved-names-list li > span').filter({hasText:'Fictional Additional Name'}).waitFor();
+          assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${title} overflow`);
+          await page.getByRole('button',{name:'Back to Settings',exact:true}).click();
+        }
+        await page.getByRole('button',{name:/^Team Members/}).click();
+        await page.getByRole('heading',{name:'Team Members',exact:true}).waitFor();
+        await page.getByRole('button',{name:'Show Farm Code',exact:true}).click();
+        await page.getByLabel('Farm invitation code',{exact:true}).waitFor();
+        assert.equal(await page.getByLabel('Farm invitation code',{exact:true}).inputValue(),'ABCD-EFGH-JKLM-NPQR-STUV');
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Team overflow');
+        await page.getByRole('button',{name:'Back to Settings',exact:true}).click();
+      } else {
+        for(const title of ['Locations','Team Members','Drivers']) assert.equal(await page.getByRole('button',{name:new RegExp(`^${title}`)}).count(),0);
+      }
+      await page.getByRole('button',{name:/^My Account/}).click();
       await page.getByRole('heading', { name: 'Account Settings', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Delete account', exact: true }).scrollIntoViewIfNeeded();
       if (width < 720 && role === 'admin') {
@@ -180,6 +259,55 @@ try {
       console.log(`Passed ${width}px ${role}: login, dashboard/scanner, settings, HTML/network/disabled handling, confirmation and fictional deletion.`);
     }
   }
+  const context=await browser.newContext({viewport:{width:390,height:844}});
+  const page=await context.newPage();
+  const user={id:'00000000-0000-4000-8000-000000000009',email:'fictional-join@example.invalid'};
+  const session={access_token:'fictional-join-token',refresh_token:'fictional-refresh',expires_at:4102444800,user};
+  let joins=0;
+  await page.route('**/*',async route=>{
+    const url=new URL(route.request().url());
+    if(url.origin===base)return route.continue();
+    const json=data=>route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+    if(url.origin===auth) {
+      if(url.pathname==='/auth/v1/signup')return json({user});
+      if(url.pathname==='/auth/v1/logout')return json({});
+      if(url.pathname==='/auth/v1/token')return json(session);
+    }
+    if(url.origin!==api)throw Error('Unexpected remote origin blocked');
+    if(url.pathname==='/api/app-capabilities')return json({farm_invitations:true});
+    if(url.pathname==='/api/farm-invites/preview')return json({join_token:user.id,farm_name:'Fictional Join Farm'});
+    if(['/api/farm-invites/register','/api/farm-invites/accept'].includes(url.pathname)) {
+      const body=route.request().postDataJSON(); assert.equal(body.join_token,user.id); assert.equal(body.farm_id,undefined); assert.equal(body.role,undefined);
+      joins++; return json(url.pathname.endsWith('register')?session:{role:'employee'});
+    }
+    if(url.pathname==='/api/session')return json({account:{user_id:user.id,email:user.email,display_name:'Fictional Employee',role:'employee'},farm:{id:user.id,name:'Fictional Join Farm'}});
+    if(url.pathname==='/api/dropdowns')return json({bins:[],haulers:[],destinations:[]});
+    if(url.pathname==='/api/scanner-contracts')return json({contracts:[]});
+    throw Error('Unexpected fictional join API path');
+  });
+  await page.goto(`${base}/app/`,{waitUntil:'domcontentloaded',timeout:60000});
+  await page.getByRole('button',{name:'Create Farm Account',exact:true}).first().click();
+  await page.getByLabel('Farm Name',{exact:true}).fill('Fictional Signup Farm');
+  await page.getByLabel('Email',{exact:true}).fill(user.email);
+  await page.getByLabel('Password',{exact:true}).fill('fictional-test-only');
+  await page.getByRole('button',{name:'Create Farm Account',exact:true}).last().click();
+  await page.getByText('Account created. Check your email to confirm the account, then log in.',{exact:true}).waitFor();
+  for(const existing of [false,true]) {
+    await page.getByRole('button',{name:'Join Farm',exact:true}).click();
+    await page.getByLabel('Farm invitation code',{exact:true}).fill('ABCD-EFGH-JKLM-NPQR-STUV');
+    await page.getByRole('button',{name:'Find Farm',exact:true}).click();
+    if(existing)await page.getByLabel('I already have a BinFlow login').check();
+    await page.getByLabel('Email',{exact:true}).fill(user.email);
+    await page.getByLabel('Password',{exact:true}).fill('fictional-test-only');
+    await page.getByRole('button',{name:existing?'Log In and Join Farm':'Create Login and Join Farm',exact:true}).click();
+    await page.locator('.capture-panel').waitFor();
+    await page.getByRole('button',{name:'Log Out',exact:true}).click();
+    await page.getByRole('heading',{name:'Welcome back',exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>localStorage.getItem('binflow-supabase-session')),null);
+  }
+  assert.equal(joins,2);
+  await context.close();
+  console.log('Passed fictional signup confirmation, invitation registration/existing login, and logout. Real Supabase Auth remains a separate staging gate.');
   console.log(`Screenshots: ${screenshots}`);
 } finally {
   await browser?.close();

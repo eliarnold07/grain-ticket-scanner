@@ -2,7 +2,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { loadMobileEnv } from './scripts/mobile-env.js';
+import { loadMobileEnv, verifyOpaquePublicKey } from './scripts/mobile-env.js';
 
 function capacitorAppEntry() {
   return {
@@ -20,8 +20,8 @@ function capacitorAppEntry() {
   };
 }
 
-export default defineConfig(({ mode }) => {
-  loadMobileEnv(process.cwd(), mode);
+export default defineConfig(async ({ mode }) => {
+  await verifyOpaquePublicKey(loadMobileEnv(process.cwd(), mode));
   return {
     base: './',
     plugins: [react(), capacitorAppEntry()],

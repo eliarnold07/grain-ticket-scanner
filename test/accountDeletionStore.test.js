@@ -9,6 +9,7 @@ test('store fails closed without atomic capability and issues only one atomic wr
     const farmId = '00000000-0000-4000-8000-000000000002';
     const member = { user_id: user.id, farm_id: farmId, email: user.email, role: 'admin' };
     let ready = false;
+    let revision = 0;
     let failWrite = false;
     const calls = [];
     globalThis.fetch = async (url, options) => {
@@ -18,7 +19,7 @@ test('store fails closed without atomic capability and issues only one atomic wr
       if (path === '/auth/v1/user') return Response.json(user);
       if (path === '/rest/v1/farm_accounts') return Response.json([member]);
       if (path === '/rest/v1/farms') return Response.json([{ id: farmId, name: 'Fictional Farm' }]);
-      if (path === '/rest/v1/rpc/binflow_account_deletion_capability') return ready ? Response.json({ version: 2 }) : Response.json({ message: 'fixture missing RPC' }, { status: 404 });
+      if (path === '/rest/v1/rpc/binflow_account_deletion_capability') return ready ? Response.json({ version: 2, revision }) : Response.json({ message: 'fixture missing RPC' }, { status: 404 });
       if (path === '/rest/v1/rpc/binflow_preview_account_deletion') return Response.json({version:2,eligibility:{allowed:true,archives_farm:false},transfer_candidates:[]});
       if (path === '/auth/v1/token') return Response.json({ user, access_token: 'fictional-new-session' });
       if (path === '/auth/v1/logout') {
@@ -39,6 +40,8 @@ test('store fails closed without atomic capability and issues only one atomic wr
           assert.equal(calls.filter(call => call.path === '/rest/v1/rpc/binflow_delete_account').length, 0);
           assert.equal(calls.filter(call => call.method === 'PATCH' || call.method === 'DELETE').length, 0);
           ready = true;
+          await assert.rejects(store.getAccountDeletionPreview(),error=>error.code==='DELETION_UNAVAILABLE');
+          revision = 1;
           assert.equal((await store.getAccountDeletionPreview()).deletion_available, true);
           const result = await store.deleteCurrentAccount(input);
           assert.equal(result.deleted, true);

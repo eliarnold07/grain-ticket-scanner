@@ -1,0 +1,8 @@
+# Release Preparation Assets
+
+- fictional-ticket.png: existing invented Prairie Lantern Grain sample from the isolated Apple Review preparation work. No real customer/family data or credentials. Ticket DEMO-OCR-2001, Corn, 750 bu, 72,000 lb gross, 30,000 lb tare, 42,000 lb net, 15.1% moisture, $5.10/bu ($3,825). Keep the fictional label. No live OCR call or production submission was made here.
+- settings-browser-qa.png and account-browser-qa.png: actual 390px browser captures with intercepted fictional fixtures from release testing. They are design/test evidence, NOT physical-iPhone or App Store screenshots.
+
+For device OCR acceptance, transfer the fictional PNG privately to the test phone (for example AirDrop). In a dedicated approved disposable test farm, Scan > Choose Photo, grant only the needed photo access, explicitly consent to OpenAI processing, extract and review all values. Choose Field as source to avoid affecting seeded bin balances and use a unique test ticket number before saving. Confirm History contains exactly one record. Do not use real tickets or modify the Apple Review seed during development. A production test-account/farm creation still needs the owner's approval/action.
+
+Brand reference is ../../src/assets/binflow-mark.png. The checked-in native icon/splash remain Capacitor placeholders; inspect the Mac's local assets before replacing anything. Prepare an owner-approved opaque 1024x1024 icon using this existing mark, with no unrelated new branding, and a compatible launch asset. Do not submit the placeholder or these QA screenshots as final store assets. Native asset editing/signing is intentionally not included in this web-asset-only update.

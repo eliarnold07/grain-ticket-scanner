@@ -34,13 +34,35 @@ try {
   if(process.env.BINFLOW_HARDENING_MIGRATIONS) {
     for(const file of ['004_inventory_estimates.sql','005_grain_command_protocol.sql']) await a.query(await readFile(join(process.env.BINFLOW_HARDENING_MIGRATIONS,file),'utf8'));
   }
+  await a.query(await readFile('docs/sql/proposed-farm-invitations.sql','utf8'));
+  await a.query(await readFile('docs/sql/proposed-invitation-wall-clock.sql','utf8'));
   await a.query(await readFile('docs/sql/proposed-account-deletion.sql','utf8'));
+  await a.query(await readFile('docs/sql/proposed-saved-names.sql','utf8'));
   const ids=[randomUUID(),randomUUID(),randomUUID(),randomUUID()];
   await a.query(`insert into auth.users(id,email) values($1,'first@example.invalid'),($2,'unrelated@example.invalid')`,[ids[0],ids[3]]);
   const farm=(await a.query('select farm_id from public.farm_accounts where user_id=$1',[ids[0]])).rows[0].farm_id;
   for(const [id,email] of [[ids[1],'second@example.invalid'],[ids[2],'employee@example.invalid']]) await a.query('insert into auth.users(id,email,raw_app_meta_data) values($1,$2,$3)',[id,email,JSON.stringify({farm_role:'employee',farm_id:farm})]);
   await a.query('update public.farm_accounts set role=$1 where user_id=$2',['admin',ids[1]]);
   for(const c of clients) await c.query(`set request.jwt.claim.role='service_role'; set statement_timeout='15s';`);
+  const settingIds=[randomUUID(),randomUUID()];
+  await Promise.all([a.query('select public.binflow_manage_saved_name($1,$2,$3,$4,$5)',[ids[0],'location',settingIds[0],'post','Fictional Elevator']),b.query('select public.binflow_manage_saved_name($1,$2,$3,$4,$5)',[ids[1],'driver',settingIds[1],'post','Fictional Driver'])]);
+  assert.equal((await observer.query('select jsonb_array_length(drivers) as n from public.farm_settings where farm_id=$1',[farm])).rows[0].n,2,'Concurrent settings edits must not overwrite one another');
+  await a.query('select public.manage_farm_invite($1,$2,$3,false)',[ids[0],'a'.repeat(64),JSON.stringify({fictional:true})]);
+  const token=(await a.query('select public.preview_farm_invite($1,$2) as result',['a'.repeat(64),'b'.repeat(64)])).rows[0].result.join_token;
+  await a.query("update private.farm_join_tokens set expires_at=clock_timestamp()+interval '1 second' where id=$1",[token]);
+  const joinPid=(await b.query('select pg_backend_pid() as pid')).rows[0].pid;
+  await a.query('begin'); await a.query('select id from public.farms where id=$1 for update',[farm]);
+  const delayedJoin=b.query('select public.accept_farm_invite($1,$2)',[ids[2],token]).then(value=>({value}),error=>({error}));
+  let joinWaiting=false;
+  for(let n=0;n<100;n++) {
+    if((await observer.query('select wait_event_type from pg_stat_activity where pid=$1',[joinPid])).rows[0]?.wait_event_type==='Lock'){joinWaiting=true;break;}
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  assert.equal(joinWaiting,true,'Invitation test must observe a real farm-lock wait');
+  await observer.query('select pg_sleep(1.1)'); await a.query('commit');
+  assert.match((await delayedJoin).error?.message || '',/Invitation expired/);
+  assert.equal((await observer.query('select role from public.farm_accounts where user_id=$1',[ids[2]])).rows[0].role,'employee');
+  console.log('PASS real PostgreSQL: concurrent saved-name edits preserve both entries; lock-delayed invitation expires without changing membership.');
   const remove=(c,id,email,successor=null)=>c.query('select public.binflow_delete_account($1,$2,$3,$4)',[id,farm,email,successor]);
   const results=await Promise.allSettled([remove(a,ids[0],'first@example.invalid'),remove(b,ids[1],'second@example.invalid')]);
   assert.equal(results.filter(x=>x.status==='fulfilled').length,1);

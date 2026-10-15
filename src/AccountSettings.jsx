@@ -76,7 +76,7 @@ export default function AccountSettings({ account, farm, apiFetch, onDeleted, on
           resetConfirmation();
           setScreen('account');
         } else onBack();
-      }}>{screen === 'deletion' ? 'Back to Account' : 'Back to Farm'}</button>
+      }}>{screen === 'deletion' ? 'Back to Account' : 'Back to Settings'}</button>
       <p className="eyebrow">Settings / Account</p>
       <h2 id="account-settings-title" ref={heading} tabIndex={-1}>{screen === 'deletion' ? 'Delete account' : 'Account Settings'}</h2>
       {screen === 'account' ? <>

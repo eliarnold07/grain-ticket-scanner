@@ -26,7 +26,10 @@ try {
     return {status:response.status,data:await response.json().catch(()=>null)};
   };
   phase='staging capability/permissions check';
+  const guard=(await database.query("select pg_get_functiondef('private.binflow_active_writer()'::regprocedure) as source")).rows[0].source;
+  assert.ok(guard.includes('FARM_RECORD_MOVE_FORBIDDEN') && guard.includes('CROSS_FARM_RELATIONSHIP'),'An older staging proposal is installed. Stop for a separately reviewed incremental update; do not reapply the full proposal.');
   assert.equal((await call('/rest/v1/rpc/binflow_account_deletion_capability',{service:true,body:{}})).data?.version,2,'Do not rerun partially applied SQL');
+  assert.equal((await call('/rest/v1/rpc/binflow_account_deletion_capability',{service:true,body:{}})).data?.revision,1,'The revised deletion schema is required');
   const run=randomUUID();
   const createUser=async(name,farmId)=>{
     phase=`fictional ${name} Auth creation and password login`;

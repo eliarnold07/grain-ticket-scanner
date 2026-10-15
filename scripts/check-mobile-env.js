@@ -1,7 +1,7 @@
-import { loadMobileEnv } from './mobile-env.js';
+import { loadMobileEnv, verifyOpaquePublicKey } from './mobile-env.js';
 
 try {
-  loadMobileEnv();
+  await verifyOpaquePublicKey(loadMobileEnv());
   console.log('Mobile environment check passed: production API/Supabase and public key configured. No values printed.');
 } catch (error) {
   console.error(error.message);

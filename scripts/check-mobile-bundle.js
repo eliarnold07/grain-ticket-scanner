@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadMobileEnv } from './mobile-env.js';
+import { mobileEntryAssets } from './mobile-assets.js';
 
 const roots = ['dist-mobile', path.join('ios', 'App', 'App', 'public')];
 const config = loadMobileEnv();
@@ -53,6 +54,20 @@ const contents = await Promise.all(searchableFiles.map(async (file) => ({
 })));
 
 const failures = [];
+
+for (const root of roots) {
+  try {
+    const entry = await readFile(path.join(root, 'index.html'), 'utf8');
+    for (const asset of mobileEntryAssets(entry)) await readFile(path.join(root, asset));
+  } catch { failures.push(`Missing, invalid or unresolved mobile entry assets in ${root}.`); }
+}
+
+for (const file of files.filter(file => file.startsWith(`dist-mobile${path.sep}`))) {
+  try {
+    const native = path.join(roots[1], path.relative(roots[0], file));
+    if (!(await readFile(file)).equals(await readFile(native))) failures.push(`Native asset differs from the latest mobile build: ${path.relative(roots[0], file)}.`);
+  } catch { failures.push('A mobile build asset was not copied into the iOS project. Run cap copy ios.'); }
+}
 
 for (const root of roots) {
   const bundled = contents.filter(({ file }) => file.startsWith(`${root}${path.sep}`));

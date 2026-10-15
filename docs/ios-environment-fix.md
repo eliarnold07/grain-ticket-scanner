@@ -85,12 +85,13 @@ unset VITE_API_URL VITE_API_BASE VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY
 git check-ignore .env.mobile.local
 npm run check:mobile-env
 npm test
-npm run cap:sync:ios
+npm run build:mobile
+npx cap copy ios
 npm run check:mobile-bundle
 open ios/App/App.xcodeproj
 ```
 
-`cap:sync:ios` builds mobile assets (including the mandatory pre-build check) and then syncs the native project. On the Mac it also regenerates Swift Package paths for macOS. Do not hand-edit generated JavaScript or assume changing an Xcode environment variable repairs an already compiled bundle.
+For the existing working Mac checkout, copy web assets only. Do not run cap:sync:ios, cap sync, cap update or regenerate native dependencies: its local signing/SceneDelegate/SPM fixes must be preserved. See SATURDAY-RELEASE-HANDOFF.md for backup/divergence checks. A fresh clone still needs the separately preserved native fixes before Xcode compilation. Do not hand-edit generated JavaScript or assume an Xcode environment variable repairs an already compiled bundle.
 
 In Xcode, retain the existing signing team and bundle ID `com.getbinflow.app`, select the connected physical iPhone, and press Run to rebuild/reinstall. No account re-registration, database change or app uninstall is needed for this configuration fix. Avoid deleting the installed app unnecessarily because that may remove its local session.
 

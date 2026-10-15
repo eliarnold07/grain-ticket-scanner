@@ -7,7 +7,19 @@ import { resolve, sep } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { validateMobileEnv, loadMobileEnv, PRODUCTION_API_URL, PRODUCTION_SUPABASE_URL } from '../scripts/mobile-env.js';
+import { validateMobileEnv, loadMobileEnv, verifyOpaquePublicKey, PRODUCTION_API_URL, PRODUCTION_SUPABASE_URL } from '../scripts/mobile-env.js';
+
+test('opaque public keys must be accepted by production, not merely have a valid-looking prefix', async () => {
+  const config={publicKey:'sb_publishable_fictional_not_a_real_key'};
+  await assert.rejects(verifyOpaquePublicKey(config,async()=>new Response(null,{status:401})),/did not accept/);
+  await assert.rejects(verifyOpaquePublicKey(config,async()=>{throw new Error('network');}),/Check your connection/);
+  await verifyOpaquePublicKey(config,async(url,options)=>{
+    assert.equal(url,`${PRODUCTION_SUPABASE_URL}/auth/v1/settings`);
+    assert.equal(options.headers.apikey,config.publicKey);
+    assert.equal(options.headers.Authorization,undefined);
+    return new Response('{}');
+  });
+});
 
 const reference = new URL(PRODUCTION_SUPABASE_URL).hostname.split('.')[0];
 const jwt = (claims) => `${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.fictional_signature`;
@@ -65,11 +77,11 @@ test('privileged values under other VITE variables cannot enter the bundle', () 
 
 test('mobile Vite configuration uses mobile mode and cannot skip validation', async () => {
   const { default: config } = await import('../vite.mobile.config.js');
-  assert.throws(() => config({ mode: 'production' }), /mode mobile/);
+  await assert.rejects(config({ mode: 'production' }), /mode mobile/);
   const previous = Object.fromEntries(Object.keys(valid).map((name) => [name,process.env[name]]));
   try {
     Object.assign(process.env, valid, { VITE_SUPABASE_ANON_KEY: 'sb_secret_fictional_do_not_use' });
-    assert.throws(() => config({ mode: 'mobile' }), /public publishable key/);
+    await assert.rejects(config({ mode: 'mobile' }), /public publishable key/);
   } finally {
     for (const [name,value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
@@ -111,6 +123,7 @@ test('bundle check rejects stale synced iOS assets even when the fresh mobile bu
   try {
     await mkdir(join(root,'dist-mobile'),{recursive:true});
     await mkdir(native,{recursive:true});
+    for(const folder of [join(root,'dist-mobile'),native]) await writeFile(join(folder,'index.html'),'<script type="module" src="./app.js"></script>');
     await writeFile(join(root,'.env.mobile.local'),Object.entries(valid).map(([name,value])=>`${name}=${value}`).join('\n'));
     const configured = Object.values(valid).join('\n');
     await writeFile(join(root,'dist-mobile','app.js'),configured);
