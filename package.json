@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "start": "node server/index.js",
+    "start:rollback": "node server/release-rollback.js",
     "server": "node server/index.js",
     "client": "vite --host 0.0.0.0",
     "build": "vite build",
@@ -19,6 +20,9 @@
     "check:account-staging": "node scripts/check-account-staging.mjs",
     "check:grain-concurrency": "node scripts/check-grain-concurrency.mjs",
     "check:grain-staging": "node scripts/check-grain-staging.mjs",
+    "check:invitation-staging": "node scripts/check-invitation-staging.mjs",
+    "check:release-compatibility": "node scripts/check-release-compatibility.mjs",
+    "check:release-staging": "node scripts/check-release-staging.mjs",
     "cap:sync": "npm run build:mobile && cap sync",
     "cap:sync:ios": "npm run build:mobile && cap sync ios",
     "cap:open:ios": "cap open ios",

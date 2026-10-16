@@ -2,6 +2,17 @@
 
 Reviewed 2026-10-15. Branch: feature/ios-app-store. No production schema, Auth accounts, farm records, deployments or live configuration were changed.
 
+Follow-up 2026-10-16: see staging-release-validation-2026-10-16.md. Real staging
+Auth/Storage/RLS/concurrency now pass; 71 automated tests and both builds pass.
+Additional reviewed provisioning SQL/backend/tests are local uncommitted work.
+
+Latest preflight remediation: staging-remediation-results.md records 009's narrow
+legacy ACL correction, fictional historical migration preservation, complete
+candidate/forced-read-only backend checks and the frozen four-entry website build.
+See release-remediation-rollout.md for pinned source, exact order and recovery/
+ownerless/hosting approval gates. Nothing here is committed, deployed or production
+authorization; production customer/reviewer data was not accessed in this phase.
+
 ## Implemented
 
 - Settings replaces Farm Setup in Admin navigation. Locations, Team Members, Drivers and My Account have dedicated screens/back navigation. Employees see only personal Settings and scanning. Runtime server middleware separately enforces permissions.
@@ -21,15 +32,19 @@ See the Saturday handoff for final command outcomes. Browser tests intercept eve
 
 Local PostgreSQL checks use independent sessions and positively observe lock waits. They cover competing Admin deletions/demotions, successor transfer, queued stale writers, unrelated-farm availability, rollback/lock timeout, concurrent name edits and invitation expiry. Grain tests also run as the actual service role, covering duplicate submission, committed-but-lost responses through the actual store adapter, injected payment/deletion rollback, contract/bin contention, split allocations, accepted-quantity replay and exact preservation of an invented review-shaped seed. Integrated 004/005/007/008 and both fresh/incremental account revision 2 are tested. Auth transport in loopback tests is explicitly fictional; PGlite checks are single-session, not concurrency proof.
 
-Real Supabase runner stopped at private local credential validation; no connection or staging mutation occurred. Missing credentials are a hard evidence boundary, not a passing test.
+Real Supabase runners now pass against vstdydmykzzwbyvlpesk using fictional data.
+They include real Auth, Storage API cleanup, observed multi-session lock waits and
+actual store/selected backend routes. The new Admin provisioning capability fixes
+GoTrue's post-INSERT metadata timing. No production connection occurred. Hosted
+proxy ingress and physical iPhone verification remain separate evidence boundaries.
 
 Read-only HTTP checks: privacy/, support/ and app/ return 200; support contains mailto:eli@getbinflow.com. API preflight allows binflow://localhost, capacitor://localhost and https://getbinflow.com. Unapproved origin gets no allow-origin header (currently 500); unauthenticated /api/session returns JSON 401. No production login/password or customer record was used.
 
 ## Release Blockers
 
-1. Real staging Supabase Auth/session/Storage, RLS, actual trigger catalog and concurrency evidence. Local credential configuration is missing. Use only vstdydmykzzwbyvlpesk; never production or Apple Review credentials.
-2. Separate approval for production schema inspection, additive proposals, backend release and deletion activation. Frontend packaging does not install API routes/SQL. Deletion remains disabled. A support email alone is not compliant in-app deletion.
-3. Coordinated production integration approval and real schema evidence. Atomic adapters are integrated locally, not deployed. The new scanner fails closed against the old API. Old web clients lack request IDs; coordinate their approved focused rollout with the backend/SQL write-maintenance window. Never apply 005 alone or merge entire branches. See ios-release-deployment-package.md for exact SQL/backend/verification/rollback package.
+1. Real staging Supabase Auth/session/Storage, RLS, trigger catalog and concurrency checks pass. Actual hosted proxy ingress remains unverified; keep invitations disabled until verified or obtain approval for a separate staging backend. Read-only production preflight is complete; backup/restore evidence and the empty ownerless farm's disposition remain unresolved.
+2. Separate approval for production additive SQL, backend release and deletion activation. Frontend packaging does not install API routes/SQL. Deletion remains disabled. A support email alone is not compliant in-app deletion.
+3. Coordinated production integration approval. Atomic adapters, write/update gates, narrow privilege correction and pinned candidate/read-only fallback are implemented/tested locally and in staging, not deployed. The new scanner fails closed against the old API. Old web clients lack request IDs; coordinate their approved focused rollout with the backend/SQL write-maintenance window and old-worker drain. Never apply 005 alone or merge entire branches. See release-remediation-rollout.md for the latest exact package and evidence boundaries.
 4. Retention policy approval: shared business history is not automatically a legal basis to retain all personal content forever. Decide lawful bases/periods, archived-farm handling and processor-held logs/backups. Update the public policy's statement that automatic in-app deletion is unavailable when activation actually happens. Existing public contact address is unchanged; public support is eli@getbinflow.com.
 5. Native asset catalog in this checkout contains default Capacitor icon/splash. Existing src/assets/binflow-mark.png is the actual supplied BinFlow mark; do not submit placeholders or invent a new brand. Mac may already have local replacements: inspect before modifying. Owner-approved opaque 1024px icon and branded launch assets are needed.
 6. Physical device acceptance, privacy report/required-reason API review and an Xcode 26+/iOS 26 SDK archive. Mac has successful local signing/SPM fixes that this branch does not overwrite. Windows cannot validate these.

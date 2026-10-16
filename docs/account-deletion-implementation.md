@@ -26,7 +26,7 @@ HTML, unsupported backend versions, unavailable routes, network failures and dat
 - Existing Supabase Auth verifies the password. Returned user ID must equal the authenticated request's user ID. The temporary reauthentication session is logged out with local scope. No password, token or backend credential is logged or bundled.
 - `binflow_delete_account` can be executed only by the server role, with a fixed search path. It rechecks actual email, membership and successor after acquiring deterministic farm row locks.
 - Existing membership role changes and account attachment/repair use server-only transactional RPCs. Farm membership is authoritative; role claims in old Auth metadata are not authorization.
-- Cross-farm attachment/repair is refused, including empty farms; existing users never need to rejoin. New Admin-provisioned employees carry a transient provisioner marker, verified inside the Auth insertion transaction under the farm lock and removed before storage. A stale deleted/demoted Admin cannot create a new member afterward.
+- Cross-farm attachment/repair is refused, including empty farms; existing users never need to rejoin. Real GoTrue applies custom app_metadata after INSERT, so new Admin-provisioned employees use the separately proposed one-use email/farm/Admin-bound authorization in proposed-admin-provisioning.sql. It is checked inside the Auth insertion transaction under the farm lock. UPDATE cleanup strips any replayed transient metadata; personal deletion atomically removes pending authorizations for the actor/email. A stale deleted/demoted Admin cannot use the authorization to create a member. This correction is staging-validated, not deployed.
 
 ## Database Safety
 

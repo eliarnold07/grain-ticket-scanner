@@ -319,6 +319,12 @@ export async function createFarmUserAccount(input) {
   if (!displayName) throw new Error('User name is required.');
   if (password.length < 8) throw new Error('User password must be at least 8 characters.');
 
+  // GoTrue applies app_metadata after its INSERT trigger. A one-use capability
+  // binds the new account to this Admin/farm/email inside the Auth transaction.
+  const provision = await serviceDb('rpc/binflow_prepare_user_provision', {
+    method: 'POST', body: { p_actor: context().user.id, p_email: email }
+  });
+  requireUuid(provision?.token);
   const created = await rawRequest('/auth/v1/admin/users', {
     method: 'POST',
     serviceRole: true,
@@ -327,12 +333,8 @@ export async function createFarmUserAccount(input) {
       password,
       email_confirm: true,
       user_metadata: {
-        display_name: displayName
-      },
-      app_metadata: {
-        farm_id: farmId,
-        binflow_provisioner_id: context().user.id,
-        farm_role: 'employee'
+        display_name: displayName,
+        binflow_provision_token: provision.token
       }
     }
   });

@@ -44,6 +44,9 @@ try {
   app.post('/api/bins',async(req,res)=>{
     try {res.json({bin:await store.createBin(req.body)});}catch{res.status(400).json({ok:false});}
   });
+  app.post('/api/contracts',async(req,res)=>{
+    try {res.json({contract:await store.createContract(req.body)});}catch{res.status(400).json({ok:false});}
+  });
   app.get('/api/ticket-submissions/:id',async(req,res)=>{
     try{res.json(await store.ticketRequestStatus(req.params.id));}catch{res.status(400).json({ok:false});}
   });
@@ -91,7 +94,20 @@ try {
   await remove(); await remove(); assert.equal(await balance(),200);
   assert.equal((await api(admin,`/ticket-submissions/${intent}`)).data.status,'deleted');
   assert.equal((await observer.query('select count(*)::int as n from public.payments where ticket_id=$1',[saved.id])).rows[0].n,0);
-  console.log(`PASS ${STAGING_REF}: actual Auth/store/PostgREST, duplicate/retry/failure rollback, own receipts, cross-farm RLS, multi-session lock/overdraw and atomic deletion.`);
+  phase='observed contract allocation race and operational-table RLS';
+  const contractResponse=await api(admin,'/contracts',{contract_id:`FICTIONAL-${run}`,buyer:'Fictional Elevator',commodity:'Corn',contracted_bushels:100,contract_price:5});
+  assert.equal(contractResponse.status,200);const contract=contractResponse.data.contract;
+  const allocated={...ticket,hauled_from:'Field',bushels:75,assignment_status:'Contract',assignments:[{type:'CONTRACT',contract_id:contract.id,bushels:75}]};
+  const contractWait=await observeLock(observer,b);
+  await a.query('begin');await command(a,{...allocated,ticket_number:`CONTRACT-A-${run}`},randomUUID());
+  const excess=command(b,{...allocated,ticket_number:`CONTRACT-B-${run}`},randomUUID()).then(value=>({value}),error=>({error}));
+  await contractWait();await a.query('commit');assert.equal((await excess).error?.message,'CONTRACT_CAPACITY_EXCEEDED');
+  const totals=(await observer.query("select sum((x->>'bushels')::numeric) delivered from public.tickets t cross join lateral jsonb_array_elements(t.assignments) x where t.farm_id=$1 and x->>'contract_id'=$2",[admin.farm,contract.id])).rows[0];assert.equal(Number(totals.delivered),75);
+  for(const table of ['bins','contracts','tickets','payments','inventory_transactions','farm_accounts','farm_settings']) {
+    const response=await fetch(`${STAGING_ORIGIN}/rest/v1/${table}?select=farm_id&farm_id=eq.${admin.farm}`,{redirect:'error',headers:{apikey:stage.config.STAGING_ANON_KEY,Authorization:`Bearer ${other.token}`}});
+    assert.equal(response.status,200);assert.deepEqual(await response.json(),[]);
+  }
+  console.log(`PASS ${STAGING_REF}: actual Auth/store/PostgREST, duplicate/retry/failure rollback, own receipts, seven-table cross-farm RLS, observed bin/contract lock races and atomic deletion.`);
   console.log('Only new fictional test farms/users remain in disposable staging. Hosted proxy and physical iPhone are separate gates.');
 } catch(error) {
   console.error(`Grain staging validation stopped at ${phase} (${String(error.code||error.name||'Error').replace(/[^a-zA-Z0-9_]/g,'')}). No credentials printed; inspect before retrying.`);

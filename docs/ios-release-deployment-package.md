@@ -4,9 +4,26 @@ This is a reviewed source package, **not authorization to deploy**. No productio
 database, user, reviewer seed or infrastructure was changed. Use the tested iOS
 implementation commit recorded in SATURDAY-RELEASE-HANDOFF.md, not a moving branch.
 
+2026-10-16 update: real staging validation passed; see
+staging-release-validation-2026-10-16.md for exact scope and remaining hosted-proxy
+boundary. The new provisioning correction and expanded tests are local uncommitted
+changes; pin their eventual reviewed commit before any release.
+
+Historical production preflight (2026-10-16): **NO-GO for production rollout.** See
+production-preflight-2026-10-16.md. Real production has broad inherited/default ACLs
+not normalized by grant-only 007, one empty ownerless farm, two historical overfilled
+contracts and sparse payment history. Recovery is not verified (Free plan, no
+scheduled backups/PITR). Both Render On Commit and Pages follow develop; a tested
+write/update gate and a schema-compatible rollback artifact were missing at inspection.
+These local/staging corrections now pass: see staging-remediation-results.md and
+release-remediation-rollout.md for the pinned source, exact cutover and boundaries.
+Recovery evidence, ownerless disposition and production approvals remain unresolved.
+Do not require zero historical overfills in production postflight: preserve the
+observed baseline instead. This addendum grants no production-change authorization.
+
 ## 1. Required Evidence Before Production Approval
 
-1. Configure `C:\Users\eliar\.binflow-staging\credentials.env` privately with only
+1. Configure `%USERPROFILE%\.binflow-staging\credentials.env` privately with only
    vstdydmykzzwbyvlpesk's STAGING_DATABASE_URL (direct/session, 5432), STAGING_ANON_KEY,
    STAGING_SERVICE_ROLE_KEY, and optional STAGING_CA_FILE. Legacy API keys must carry
    that project reference and correct role; TLS verification is mandatory. Copy from
@@ -21,8 +38,9 @@ implementation commit recorded in SATURDAY-RELEASE-HANDOFF.md, not a moving bran
    store/Auth/PostgREST plus three PostgreSQL sessions. Account tests actual Auth,
    reauthentication, deleted-account access/refresh denial, cross-farm RLS, refusal to move a
    member, injected rollback, Storage ownership/API cleanup, competing Admin deletion,
-   successor and sole-member archival. They are prepared but **not executed past
-   credential validation** on this workstation. Account's local disposable harness
+   successor and sole-member archival. These now **pass on real staging**; expanded
+   checks cover historical attribution, summary/audit cleanup, actual Admin-created
+   Employee provisioning and demotion/delete lock waits. Account's local harness
    enables deletion only for its test process; no deployed deletion flag is changed.
 4. Inspect the resulting catalog and run the same read-only verification SQL below.
    Verify membership promotion/demotion versus deletion under genuine separate
@@ -32,7 +50,7 @@ implementation commit recorded in SATURDAY-RELEASE-HANDOFF.md, not a moving bran
 5. Account model permits ONE current membership (farm_accounts.user_id primary key),
    not multiple simultaneous farms. Test that a second-farm attachment/join is refused,
    and historical scanner attribution across farms is anonymized without changing
-   their business rows. Local SQL tests exercise both; hosted evidence remains needed.
+   quantities/business history. Both are now verified against real staging.
 
 ## 2. Exact SQL Inventory And Order
 
@@ -59,6 +77,8 @@ existing production schema**. Production approval must select the missing subset
 | 7A, absent account schema ONLY | docs/sql/proposed-account-deletion.sql | Version 2/revision 2 personal deletion, active-writer/membership guards, privacy cleanup and archival |
 | 7B, existing revision 1 ONLY | docs/sql/upgrade-account-deletion-revision-2.sql | Replaces only active-writer and capability functions; preserves rows, policies and grants |
 | 8, only if absent | docs/sql/proposed-saved-names.sql | Farm-locked driver/location editing |
+| 9, only if absent | docs/sql/proposed-admin-provisioning.sql | One-use email/farm/Admin-bound Auth provisioning, metadata cleanup and atomic pending-authorization cleanup on personal deletion; fixes real GoTrue INSERT timing without moving existing memberships |
+| 10, LAST after all guards | supabase/migrations/009_legacy_application_privileges.sql | Normalize existing broad table ACLs on all nine application tables; no record, RLS or global-default change; staging installed/tested only |
 
 Choose **7A OR 7B, never both**. An older/different account schema needs a separately
 reviewed incremental plan. Every migration has an explicit transaction. If any
@@ -74,6 +94,10 @@ historical guard fixture and verified equal to a fresh revision-2 installation.
   imports, plus reviewed package/lock changes. Use the final complete dependency
   graph from the tested commit. Do not deploy the whole iOS branch to Pages, or assume
   the old backend can run after new write guards/direct-membership revocations.
+- Include the reviewed Admin-provisioning correction in supabaseStore.js and SQL
+  order 9 together. New backend fails before Auth creation if its RPC is missing;
+  old metadata-based provisioning is NOT a compatible rollback. No migration of
+  existing accounts or automatic reassignment of mistakenly created farms is allowed.
 - Review an explicit backend-only diff/lock and obtain approval before deployment.
   Preserve existing origins, API domain, Supabase project, OCR settings and existing
   accounts. ACCOUNT_DELETION_ENABLED stays false; billing stays disabled. Invitations
@@ -120,5 +144,13 @@ historical guard fixture and verified equal to a fresh revision-2 installation.
 
 Local tests use genuine loopback PostgreSQL with independent connections, explicitly
 observed lock waits and actual service-role permissions. Supabase Auth/Storage in
-those tests are fixtures, not hosted evidence. Staging credentials and production
-schema approval are still required; **production deletion is NO-GO until validated**.
+those loopback-only tests are fixtures, not hosted evidence. The separate staging
+results below do not grant production schema/deployment approval; **production
+deletion remains NO-GO until its release gates are resolved**.
+
+Real Supabase staging Auth/Storage/RLS and independently observed database races now
+pass (dated evidence above). Local proxy simulation also passes; actual hosted ingress
+and all production approvals remain outstanding. The completed read-only production
+preflight and later staging remediation are recorded in production-preflight-2026-10-16.md
+and staging-remediation-results.md. Keep
+deletion/billing disabled on deployed services; the disposable harness is not activation.

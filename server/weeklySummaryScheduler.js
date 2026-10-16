@@ -11,6 +11,7 @@ import {
   weeklySummaryWindow,
   WEEKLY_SUMMARY_TIME_ZONE
 } from './weeklySummary.js';
+import { writesPaused } from './releaseControls.js';
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -43,6 +44,7 @@ async function sendWithResend({ recipients, subject, html, idempotencyKey }) {
 }
 
 export async function sendWeeklySummaries(now = new Date()) {
+  if(writesPaused()) return {paused:true};
   if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
     throw new Error('Weekly summaries require RESEND_API_KEY and RESEND_FROM_EMAIL.');
   }
@@ -114,7 +116,7 @@ export function startWeeklySummaryScheduler() {
   let running = false;
 
   async function check() {
-    if (running || !isWeeklySummarySendTime(new Date(), WEEKLY_SUMMARY_TIME_ZONE)) return;
+    if (running || writesPaused() || !isWeeklySummarySendTime(new Date(), WEEKLY_SUMMARY_TIME_ZONE)) return;
     running = true;
     try {
       const results = await sendWeeklySummaries();

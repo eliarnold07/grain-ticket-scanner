@@ -6,6 +6,8 @@ const messages = new Set([
   'Could not prepare this photo for upload.', 'Could not read the selected photo.'
 ]);
 const codes = Object.freeze({
+  RELEASE_MAINTENANCE: 'BinFlow is being updated. Your changes were not submitted. Please try again shortly.',
+  CLIENT_UPDATE_REQUIRED: 'BinFlow has been updated. Refresh the website or update the iPhone app before saving this ticket.',
   IDEMPOTENCY_CONFLICT: 'An earlier submission may already be saved. Check Previous Submission before starting another ticket.',
   TICKET_ALREADY_EXISTS: 'This ticket is already saved. Review the existing ticket instead of submitting it again.',
   TICKET_DELETED: 'This submission was saved and later deleted. Check Previous Submission before starting another ticket.',

@@ -9,6 +9,7 @@ import { registerFarmInvitationRoutes } from './farmInvitationRoutes.js';
 import { settingsNamesRoutes } from './settingsNamesRoutes.js';
 import { requireUuid, validateApiIds } from './restQuery.js';
 import { farmPermissionGuard } from './farmPermissions.js';
+import { releaseWriteGuard, requireAtomicTicketClient } from './releaseControls.js';
 import {
   submitTicketAtomically,
   ticketRequestStatus,
@@ -120,6 +121,7 @@ app.use(cors({
     callback(error);
   }
 }));
+app.use('/api',releaseWriteGuard);
 app.use(express.json({ limit: '2mb' }));
 app.param('id', (_req, res, next, id) => {
   try { requireUuid(id); next(); } catch { res.status(400).json({ code: 'INVALID_ID' }); }
@@ -886,7 +888,7 @@ app.post('/api/extract-ticket', scanUpload, async (req, res) => {
   }
 });
 
-app.post('/api/submit-ticket', async (req, res) => {
+app.post('/api/submit-ticket', requireAtomicTicketClient, async (req, res) => {
   const submittedTicket = req.body?.ticket || {};
   const ticket = {
     ...normalizeTicketData(submittedTicket),

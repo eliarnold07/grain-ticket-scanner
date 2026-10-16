@@ -2,6 +2,34 @@
 
 Prepared for October 17, 2026. Branch: **feature/ios-app-store**.
 
+Current authorization: reviewed LOCAL release commit plus committed-tree validation
+only. Exact local SHA is reported with its external artifact receipt (use
+`git rev-parse HEAD` in that checkout). No push, merge, production access/deploy/SQL,
+maintenance, job pause or feature activation is authorized. The ownerless farm
+must stay untouched; optional archival is NOT approved. See
+docs/production-cutover-commands.md and the final rollout package. Earlier
+uncommitted/approval statuses below are historical, not current authorization.
+
+Latest rollout preparation: docs/final-production-rollout-package.md contains the
+current 127-file frozen source/SQL pins, exact pending commit boundary, verified
+off-device USB copy and separate ownerless-farm preservation proposal. Full staged
+backend/OFF-gate checks pass; production, push and Mac acceptance remain
+unapproved/unexecuted. Older artifact pins in prior reports are historical.
+
+October 16 staging follow-up: credentials are now configured privately and real
+Supabase checks pass. See docs/staging-release-validation-2026-10-16.md. Expanded
+tests and a real-Auth provisioning correction remain local/uncommitted; the pushed
+tip is still c5fa44d9137aa13f6a882df2afd3e4351f4336cb. Do not assume the Mac can pull
+these follow-up changes until a separately reviewed commit/push occurs.
+
+Latest staging remediation also passes: docs/staging-remediation-results.md and
+docs/release-remediation-rollout.md supersede earlier missing-ACL/write-gate notes.
+009 is installed in staging ONLY; legacy-history migration preservation and a
+content-pinned candidate/read-only fallback are tested. Encrypted local production
+recovery now passes (docs/manual-recovery-results-2026-10-16.md). Fresh cutover
+backup/off-device custody, ownerless-farm disposition, hosted proxy/device checks and production approvals
+remain gates. No new commit/push is authorized or performed in this phase.
+
 Tested implementation commit: **e67b5061eeebc47d5b476165308ff154054bf435**. A handoff-only documentation commit follows it; obtain the exact pushed tip with `git rev-parse origin/feature/ios-app-store` after fetching. The file pins the implementation commit rather than attempting a self-referential hash of its own documentation commit. Do not substitute develop, main or the hardening branch. No production release is authorized by these commands.
 
 ## 1. Completed
@@ -23,7 +51,7 @@ Windows results for this implementation:
 
 | Check | Result |
 | --- | --- |
-| npm test | 69 tests passed |
+| npm test | 71 tests passed after preflight remediation; same 71 pass in frozen source artifact |
 | npm run build | Passed |
 | npm run build:mobile | Passed with production public configuration |
 | npx cap copy ios | Passed; no native dependency regeneration |
@@ -32,7 +60,8 @@ Windows results for this implementation:
 | Real local PostgreSQL, independent sessions | Atomic duplicate/response-loss/failure retries; competing bin/contract fills; circular deletion/rollback; accepted-quantity replay; service-role permissions; unchanged fictional 3-bin/3-contract/7-ticket/7-payment/10-transaction seed; Admin deletion/demotion races, successor, stale writes, saved names and invitation expiry passed |
 | Browser, fictional intercepted requests | 320/390/430/768/1280px; both roles, Settings, long names, scanner/review, lost-response retry with same UUID, errors, session reload, offline and consent tested |
 | Dependency security | npm audit and npm audit --omit=dev: 0 known findings |
-| Real Supabase staging | BLOCKED before connection: private credentials unconfigured; not a pass |
+| Real Supabase staging | PASS: actual Auth/Storage/PostgREST/RLS, atomic retry/rollback, observed bin/contract and role/delete lock races; hosted proxy remains separate |
+| Legacy production-shape remediation | PASS: 009 effective ACLs on nine tables; exact migration preservation of fictional overfills/sparse payments/standalone payment/review seed/ownerless farm; full candidate and forced-read-only fallback HTTP checks |
 | New iPhone/Xcode/archive/TestFlight | NOT EXECUTED from Windows |
 
 No production customer/reviewer account was used in automated tests. Browser/SQL fixtures are not proof of native camera, real Auth/Storage or production deletion.
@@ -41,7 +70,7 @@ No production customer/reviewer account was used in automated tests. Browser/SQL
 
 **NO-GO for public submission** until all of these are resolved:
 
-1. Real disposable Supabase Auth/RLS/Storage/membership/concurrency validation, using vstdydmykzzwbyvlpesk only. Production schema evidence is not newly verified.
+1. Real disposable Supabase Auth/RLS/Storage/membership/concurrency validation passes on vstdydmykzzwbyvlpesk. Production preflight/remediation and actual encrypted local recovery pass; see docs/manual-recovery-results-2026-10-16.md. A fresh cutover backup, off-device custody and ownerless-farm disposition still need handling; hosted invitation proxy validation is separate and not inferred from local simulation.
 2. Separately approved compatible SQL/backend rollout and explicit account-deletion activation. A mobile rebuild alone cannot fix a missing production API. Production deletion must work, not merely display a support link.
 3. Approved coordinated backend/SQL/web-client cutover. Atomic source is now integrated/tested, but NOT deployed. New mobile scanner intentionally blocks submission against the old API; old web clients need request IDs before reopening writes. Follow the deployment package, not an isolated 005 migration or full-branch merge.
 4. Owner approval of lawful retention/processor practices and privacy-label discrepancies; separately update the live policy when deletion goes live. No invented retention periods or permanent-free policy.
@@ -55,11 +84,36 @@ Optional polish, not reasons to postpone safe device testing: extra App Store sc
 
 ## 4. Before Saturday: Exact Credential Boundary
 
-Owner/trusted operator must populate the existing private Windows file `C:\Users\eliar\.binflow-staging\credentials.env` locally, not in ChatGPT/GitHub, with STAGING_DATABASE_URL (staging direct/session connection, port 5432), STAGING_ANON_KEY, STAGING_SERVICE_ROLE_KEY and optional STAGING_CA_FILE. Obtain them only from **vstdydmykzzwbyvlpesk**. Use verified TLS and a protected local file. Never use production or Apple Review credentials. No new external resource/cost is authorized.
+Owner/trusted operator must populate the existing private Windows file `%USERPROFILE%\.binflow-staging\credentials.env` locally, not in ChatGPT/GitHub, with STAGING_DATABASE_URL (staging direct/session connection, port 5432), STAGING_ANON_KEY, STAGING_SERVICE_ROLE_KEY and optional STAGING_CA_FILE. Obtain them only from **vstdydmykzzwbyvlpesk**. Use verified TLS and a protected local file. Never use production or Apple Review credentials. No new external resource/cost is authorized.
 
-Then notify the developer that local staging configuration is ready. Run `npm run check:grain-staging` and `npm run check:account-staging` after reviewing/installing only the missing approved SQL subset. `-- --apply-proposal` installs a missing account proposal only with staging approval; an older installed revision needs the incremental upgrade, not replay. See docs/ios-release-deployment-package.md for exact files/order. Keep deployed billing/deletion disabled; only the disposable local harness exercises deletion.
+This setup is now complete. Do not repost credentials or rerun installed SQL.
+Staging now includes 008, account revision 2, saved names and the additional
+Admin-provisioning correction. All three staging commands pass, including
+`npm run check:invitation-staging`. Legacy credential-file email fields
+from older templates are not needed; current runners generate disposable fictional
+identities. No deployed feature flag was enabled.
 
-Production schema inspection, SQL, backend deployment, flag activation, privacy deployment and Apple submission each still require separate approval. Use docs/sql/account-release-inspection.sql as a read-only catalog/precondition review, not a production mutation script.
+Staging-only remediation also installed 009 after the complete guard/provisioning
+schema. Do not rerun the old installation sequence. The latest evidence includes
+`npm run check:release-compatibility`, `npm run check:release-staging`, grain and
+invitation checks after 009, plus read-only catalog postflight. Historical overfills
+are intentional fictional compatibility fixtures, not something to repair. See
+docs/staging-remediation-results.md for the exact scope and pinned artifact.
+
+For future staging reruns, use `npm run check:grain-staging` and the separately
+authorized disposable `npm run check:account-staging` harness. `-- --apply-proposal`
+is only for an absent account schema with staging approval, not this installed
+project. Keep deployed billing/deletion disabled. The owner-approved encrypted
+manual production export and isolated recovery passed; see
+docs/manual-recovery-results-2026-10-16.md. Do not repeat setup or restoration.
+Next approvals concern reviewed release preservation, ownerless-farm disposition
+and the coordinated production rollout; a fresh cutover backup is still required.
+
+Read-only production inspection is recorded in docs/production-preflight-2026-10-16.md.
+Any further production access, SQL, backup, backend deployment, flag activation,
+privacy deployment and Apple submission still requires separate approval. Use
+docs/release-remediation-rollout.md for the latest coordinated plan, not an isolated
+migration or automatic whole-branch merge.
 
 ## 5. Safe Mac Update
 

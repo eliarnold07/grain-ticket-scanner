@@ -36,6 +36,7 @@ try {
   await a.query(await readFile('docs/sql/proposed-invitation-wall-clock.sql','utf8'));
   await a.query(await readFile('docs/sql/proposed-account-deletion.sql','utf8'));
   await a.query(await readFile('docs/sql/proposed-saved-names.sql','utf8'));
+  await a.query(await readFile('docs/sql/proposed-admin-provisioning.sql','utf8'));
   const ids=[randomUUID(),randomUUID(),randomUUID(),randomUUID()];
   await a.query(`insert into auth.users(id,email) values($1,'first@example.invalid'),($2,'unrelated@example.invalid')`,[ids[0],ids[3]]);
   const farm=(await a.query('select farm_id from public.farm_accounts where user_id=$1',[ids[0]])).rows[0].farm_id;

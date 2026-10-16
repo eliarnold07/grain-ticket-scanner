@@ -11,9 +11,11 @@ cross join (values('public.farm_ticket_command(uuid,text,uuid,jsonb,uuid)'),
  ('public.binflow_delete_account(uuid,uuid,text,uuid)')) p(signature);
 select r.role_name,t.table_name,
  has_table_privilege(r.role_name,t.table_name,'TRUNCATE') as can_truncate,
- has_table_privilege(r.role_name,t.table_name,'TRIGGER') as can_attach_trigger
+ has_table_privilege(r.role_name,t.table_name,'TRIGGER') as can_attach_trigger,
+ has_table_privilege(r.role_name,t.table_name,'REFERENCES') as can_reference
 from (values('anon'),('authenticated'),('service_role')) r(role_name)
-cross join (values('public.bins'),('public.tickets'),('public.payments'),('public.inventory_transactions')) t(table_name);
+cross join (values('public.bins'),('public.tickets'),('public.payments'),('public.inventory_transactions'),
+ ('public.farms'),('public.farm_accounts'),('public.farm_settings'),('public.contracts'),('public.weekly_summary_deliveries')) t(table_name);
 select count(*) as leaked_writer_capabilities from private.grain_writers;
 select count(*) as leaked_privacy_capabilities from private.binflow_privacy_writes;
 select count(*) as duplicate_submission_receipts from (
