@@ -2,7 +2,7 @@
 
 Prepared for October 17, 2026. Branch: **feature/ios-app-store**.
 
-Tested implementation commit: **3bc805d21a8b3a5a6b42571876ea0889fcc309c7**. A handoff-only documentation commit follows it; obtain the exact current remote tip with `git rev-parse origin/feature/ios-app-store` after fetching. Do not substitute develop, main or the hardening branch. No production release is authorized by these commands.
+Tested implementation commit: **e67b5061eeebc47d5b476165308ff154054bf435**. A handoff-only documentation commit follows it; obtain the exact pushed tip with `git rev-parse origin/feature/ios-app-store` after fetching. The file pins the implementation commit rather than attempting a self-referential hash of its own documentation commit. Do not substitute develop, main or the hardening branch. No production release is authorized by these commands.
 
 ## 1. Completed
 
@@ -12,6 +12,9 @@ Tested implementation commit: **3bc805d21a8b3a5a6b42571876ea0889fcc309c7**. A ha
 - Personal deletion hardening: no farm closure, cross-farm guards, atomic successor/sole-member handling, privacy cleanup and revision-gated activation. Deletion remains disabled pending real staging and approved production rollout.
 - Plain-language API/Auth errors, offline/loading recovery, session cleanup, per-photo OpenAI consent, comma-safe ticket quantities and required-field review.
 - Stronger production env and copied-asset validation; fixed mobile icon-link packaging. No native project/signing/SPM files changed.
+- Atomic ticket/payment/inventory commands integrated selectively; durable request UUIDs, response-loss recovery, cross-account submit protection, locked contract capacity checks and accepted-quantity ledger replay. New scanner refuses an older non-atomic API. No new product features or estimation UI.
+- Account revision 2 preserves Employee bin sales inside the trusted protocol. Separate incremental revision-1 upgrade, SQL preflight/postflight and coordinated backend/client cutover/rollback package: docs/ios-release-deployment-package.md.
+- Targeted dependency patches: both npm audit modes now report zero known findings. Capacitor/Camera unchanged. Native/policy audit: docs/ios-native-release-audit.md; proposed policy activation wording: docs/privacy-release-addendum.md (not published).
 - Listing/review/screenshot drafts: docs/app-store-submission-draft.md. Fictional sample and browser QA images: docs/release-assets/. Detailed evidence/rollout: docs/release-candidate-readiness.md.
 
 ## 2. Validation
@@ -20,14 +23,15 @@ Windows results for this implementation:
 
 | Check | Result |
 | --- | --- |
-| npm test | 63 tests passed |
+| npm test | 69 tests passed |
 | npm run build | Passed |
 | npm run build:mobile | Passed with production public configuration |
 | npx cap copy ios | Passed; no native dependency regeneration |
 | npm run check:mobile-bundle | Passed; both roots, asset references/copy equality and privileged-secret scan |
-| Local SQL checks | Baseline plus actual preserved 004/005 inventory guards passed |
-| Real local PostgreSQL, independent sessions | Admin deletion races, lock wait/timeouts, rollback, successor transfer, stale writes, concurrent settings and invitation expiry passed |
-| Browser, fictional intercepted requests | 320/390/430/768/1280px; both roles, Settings, long names, scanner/review, errors, session reload, offline and consent tested |
+| Local SQL checks | Baseline plus integrated 004/005/007/008 guards passed |
+| Real local PostgreSQL, independent sessions | Atomic duplicate/response-loss/failure retries; competing bin/contract fills; circular deletion/rollback; accepted-quantity replay; service-role permissions; unchanged fictional 3-bin/3-contract/7-ticket/7-payment/10-transaction seed; Admin deletion/demotion races, successor, stale writes, saved names and invitation expiry passed |
+| Browser, fictional intercepted requests | 320/390/430/768/1280px; both roles, Settings, long names, scanner/review, lost-response retry with same UUID, errors, session reload, offline and consent tested |
+| Dependency security | npm audit and npm audit --omit=dev: 0 known findings |
 | Real Supabase staging | BLOCKED before connection: private credentials unconfigured; not a pass |
 | New iPhone/Xcode/archive/TestFlight | NOT EXECUTED from Windows |
 
@@ -39,21 +43,21 @@ No production customer/reviewer account was used in automated tests. Browser/SQL
 
 1. Real disposable Supabase Auth/RLS/Storage/membership/concurrency validation, using vstdydmykzzwbyvlpesk only. Production schema evidence is not newly verified.
 2. Separately approved compatible SQL/backend rollout and explicit account-deletion activation. A mobile rebuild alone cannot fix a missing production API. Production deletion must work, not merely display a support link.
-3. The launch branch still contains legacy multi-request grain writes. Selectively integrate/validate the hardening branch's atomic/idempotent ticket/inventory adapters before deploying inventory guards. Do not apply 005 alone or merge entire branches blindly.
+3. Approved coordinated backend/SQL/web-client cutover. Atomic source is now integrated/tested, but NOT deployed. New mobile scanner intentionally blocks submission against the old API; old web clients need request IDs before reopening writes. Follow the deployment package, not an isolated 005 migration or full-branch merge.
 4. Owner approval of lawful retention/processor practices and privacy-label discrepancies; separately update the live policy when deletion goes live. No invented retention periods or permanent-free policy.
 5. Owner-approved final native icon/splash. This Windows checkout contains Capacitor placeholders; inspect the Mac's local replacements first. Existing BinFlow mark is in src/assets/binflow-mark.png. Do not overwrite local native assets/signing to satisfy a checklist.
 6. Physical-iPhone acceptance, any supported iPad/landscape checks, Xcode archive/privacy report and Apple account completion. Xcode 26+/iOS 26 SDK is the current upload minimum; the application's device deployment target remains iOS 15.
-7. Targeted triage of existing dependency advisories before backend release (13 total, including 3 critical); no blind audit fix or unrelated upgrade was performed.
+Dependency advisories found during preparation have been patched locally; the hosted backend is unchanged until its approved release. This is no longer an unresolved local advisory blocker.
 
 Optional polish, not reasons to postpone safe device testing: extra App Store screenshot captions and later subscription-management UI. There is deliberately no nonfunctional billing page.
 
-**GO for physical-device UI verification** once the safe pull/build checks below pass. With today's unchanged production backend, deletion remains unavailable, invitations stay hidden unless advertised, and new saved-name editing requires its backend/SQL rollout. Do not mistake a successful installation for full feature activation.
+**GO for physical-device UI verification** once the safe pull/build checks below pass. With today's unchanged production backend, ticket saving is safely blocked by the new revision check, deletion remains unavailable, invitations stay hidden unless advertised, and saved-name editing requires its backend/SQL rollout. Login/dashboard remain testable. Do not mistake installation for full feature activation.
 
 ## 4. Before Saturday: Exact Credential Boundary
 
 Owner/trusted operator must populate the existing private Windows file `C:\Users\eliar\.binflow-staging\credentials.env` locally, not in ChatGPT/GitHub, with STAGING_DATABASE_URL (staging direct/session connection, port 5432), STAGING_ANON_KEY, STAGING_SERVICE_ROLE_KEY and optional STAGING_CA_FILE. Obtain them only from **vstdydmykzzwbyvlpesk**. Use verified TLS and a protected local file. Never use production or Apple Review credentials. No new external resource/cost is authorized.
 
-Then notify the developer that local staging configuration is ready. The guarded runner is `npm run check:account-staging`; `-- --apply-proposal` installs missing account SQL only after staging SQL review/approval. It stops on old/partial proposals; do not repeatedly reapply CREATE statements. The invitation proposals mirror already-preserved 003/006 and must not be rerun on a project that already has them. Saved-name SQL requires its own reviewed application. Keep deployed billing/deletion disabled while testing; only a local disposable harness temporarily exercises deletion.
+Then notify the developer that local staging configuration is ready. Run `npm run check:grain-staging` and `npm run check:account-staging` after reviewing/installing only the missing approved SQL subset. `-- --apply-proposal` installs a missing account proposal only with staging approval; an older installed revision needs the incremental upgrade, not replay. See docs/ios-release-deployment-package.md for exact files/order. Keep deployed billing/deletion disabled; only the disposable local harness exercises deletion.
 
 Production schema inspection, SQL, backend deployment, flag activation, privacy deployment and Apple submission each still require separate approval. Use docs/sql/account-release-inspection.sql as a read-only catalog/precondition review, not a production mutation script.
 
@@ -150,7 +154,7 @@ Use a dedicated owner-approved disposable test farm/account, never real customer
 - Home focuses on grain operations; no administrative/deletion panel. Six Admin navigation labels fit, including Home and Settings; Employees cannot open farm-management screens.
 - Settings > Locations: view/add/edit/remove fictional names, back, no ticket-history rename. Team Members: list, enabled invitation flow, rotation/expiry, supported role promotion. Drivers: names and scanner choices. Failed/unavailable operations show plain-language errors.
 - My Account: correct identity/farm/role, privacy/support links; Delete account is a secondary action with consequences, email/password/acknowledgment and same-farm successor if needed. Cancel is harmless. When disabled, no destructive submit. Test actual deletion only on separately approved disposable accounts after the full staging/rollout gates, including old-token denial and retained shared grain history.
-- Take Photo and Choose Photo; permission denial/cancel/restricted selection; preview, per-photo AI consent unchecked by default, OCR, review/edit, required fields, quantities with commas, manual entry without OCR, submit once, History once, assignment/payment display and contract-overage choice.
+- After compatible backend approval/rollout: Take Photo and Choose Photo; permission denial/cancel/restricted selection; preview, per-photo AI consent unchecked by default, OCR, review/edit, required fields, quantities with commas, manual entry without OCR, submit once, History once, assignment/payment display and contract-overage choice. Lose/recover a response using the same request; Check Previous Submission confirms a saved/deleted intent before starting a new one. A changed contract fill must prompt reallocation, never overflow silently.
 - Bins/contracts/history include long names and realistic fictional records; no horizontal page overflow or obstructed buttons. Check empty/loading/error states and a lost network response without blindly resubmitting a grain mutation.
 - Focus every bottom input with the actual keyboard, scroll to buttons, rotate, increase text size, check home indicator/notch and safe areas. Browser checks cannot validate WKWebView keyboard or native permissions.
 - Support email opens eli@getbinflow.com; Privacy opens https://getbinflow.com/privacy/ without login. Do not change live policy wording as part of device testing.
