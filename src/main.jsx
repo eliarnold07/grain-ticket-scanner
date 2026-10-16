@@ -11,6 +11,7 @@ import FarmInvitationSettings from './FarmInvitationSettings.jsx';
 import JoinFarm from './JoinFarm.jsx';
 import { fetchWithTimeout } from './network.js';
 import { missingTicketFields, ticketBushels as parseTicketBushels } from './ticketReview.js';
+import { pendingTicketRequest, completeTicketRequest, confirmedTicketReceipt, requireAtomicTicketWrites, postTicketForActor } from './ticketRequest.js';
 import { canOpenView, SETTINGS_SCREENS } from './settingsNavigation.js';
 import { cleanMessage, readErrorResponse } from './apiErrors.js';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
@@ -304,6 +305,7 @@ function App() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [ocrConsent, setOcrConsent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const ticketSubmittingRef = useRef(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [isLoadingDropdowns, setIsLoadingDropdowns] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -1649,7 +1651,7 @@ function App() {
   }
 
   async function submitReviewedTicket(overageResolution = null) {
-    if (isSubmitting) {
+    if (ticketSubmittingRef.current) {
       return;
     }
     const missing = missingTicketFields(ticket);
@@ -1744,26 +1746,29 @@ function App() {
       }
     }
 
+    ticketSubmittingRef.current = true;
     setIsSubmitting(true);
     setIsSuccess(false);
     setStatus('Submitting reviewed data...');
 
     try {
-      const sendTicket = (confirmedOverdraw) => apiFetch('/api/submit-ticket', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const actor = sessionRef.current?.user?.id;
+      if (!actor) throw new Error('Please log in to continue.');
+      // Keep one durable intent until a confirmed save, including lost responses.
+      const requestId = pendingTicketRequest(localStorage, actor);
+      await requireAtomicTicketWrites(apiFetch, requestId);
+      const sendTicket = (confirmedOverdraw) => postTicketForActor(apiFetch, () => sessionRef.current?.user?.id, actor, {
+          request_id: requestId,
           ticket: {
             ...ticket,
             ...assignment
           },
           allow_bin_overdraw: confirmedOverdraw
-        })
       });
       let response = await sendTicket(allowBinOverdraw);
 
       if (response.status === 409 && !allowBinOverdraw) {
-        const errorData = await response.json();
+        const errorData = await response.clone().json().catch(() => ({}));
 
         if (errorData.code === 'BIN_INVENTORY_OVERDRAW') {
           allowBinOverdraw = window.confirm('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
@@ -1782,6 +1787,10 @@ function App() {
       }
 
       const data = await response.json();
+      confirmedTicketReceipt(data);
+      completeTicketRequest(localStorage, actor, requestId);
+      if (sessionRef.current?.user?.id !== actor) return;
+      setRequestError('');
 
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
@@ -1817,8 +1826,44 @@ function App() {
     } catch (error) {
       reportError(error);
     } finally {
+      ticketSubmittingRef.current = false;
       setIsSubmitting(false);
     }
+  }
+
+  async function checkPreviousSubmission() {
+    if (ticketSubmittingRef.current) return;
+    const actor = sessionRef.current?.user?.id;
+    if (!actor) return;
+    ticketSubmittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const requestId = pendingTicketRequest(localStorage, actor);
+      const response = await apiFetch(`/api/ticket-submissions/${requestId}`);
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await response.json();
+      if (sessionRef.current?.user?.id !== actor) return;
+      if (!['committed', 'deleted'].includes(data.status) || !data.ticket?.id) {
+        setStatus('No saved submission was found for this attempt. Retry the original ticket; do not start a second copy.');
+        return;
+      }
+      const saved = data.ticket;
+      const description = `Ticket ${saved.ticket_number}: ${saved.bushels} bushels to ${saved.delivered_to}.`;
+      if (window.confirm(`${description}\n${data.status === 'deleted' ? 'It was saved and later deleted.' : 'It is already saved.'}\nClear this review before starting a different ticket?`)) {
+        completeTicketRequest(localStorage, actor, requestId);
+        setTicket(emptyTicket());
+        setScannerAssignment({ status: 'Spot', contractId: '' });
+        setContractOverage(null);
+        setSelectedFile(null);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl('');
+        setOtherValues({ delivered_to: '', hauled_by: '', hauled_from: '' });
+        setOtherSelections({ delivered_to: false, hauled_by: false, hauled_from: false });
+        setDuplicate(null);
+        setStatus('Previous submission confirmed. You can now review a different ticket.');
+      }
+    } catch (error) { reportError(error); }
+    finally { ticketSubmittingRef.current = false; setIsSubmitting(false); }
   }
 
   function submitContractOverage() {
@@ -2976,6 +3021,7 @@ function App() {
         </button>
 
         <p className="status-text">{status}</p>
+        <button type="button" className="text-button" onClick={checkPreviousSubmission} disabled={isSubmitting || isExtracting}>Check Previous Submission</button>
 
         {isLoadingDropdowns && (
           <div className="notice">Loading shared bins, locations, and drivers...</div>

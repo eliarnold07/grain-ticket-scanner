@@ -41,7 +41,7 @@ test('store fails closed without atomic capability and issues only one atomic wr
           assert.equal(calls.filter(call => call.method === 'PATCH' || call.method === 'DELETE').length, 0);
           ready = true;
           await assert.rejects(store.getAccountDeletionPreview(),error=>error.code==='DELETION_UNAVAILABLE');
-          revision = 1;
+          revision = 2;
           assert.equal((await store.getAccountDeletionPreview()).deletion_available, true);
           const result = await store.deleteCurrentAccount(input);
           assert.equal(result.deleted, true);

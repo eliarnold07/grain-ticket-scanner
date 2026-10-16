@@ -43,10 +43,11 @@ test('actual store rejects malformed cross-farm mutation IDs before any privileg
     const store=await import('./server/supabaseStore.js');
     await new Promise((resolve,reject)=>store.requireSupabaseAuth({path:'/bins',get:()=> 'Bearer fictional'}, {status:()=>({json:()=>reject(Error('Fixture auth failed'))})},async()=>{
       try {
-        for(const bad of [user+'#','%23',user+'&farm_id=eq.'+user]) await assert.rejects(store.deleteBin(bad));
+        for(const bad of [user+'#','%23',user+'&farm_id=eq.'+user]) await assert.rejects(async()=>store.deleteBin(bad));
         assert.equal(writes.length,0);
         await store.deleteBin(user);
-        assert.equal(writes[0].u.searchParams.get('farm_id'),'eq.'+farm);
+        assert.equal(writes[0].u.pathname,'/rest/v1/rpc/farm_inventory_command');
+        assert.deepEqual(JSON.parse(writes[0].options.body),{p_actor:user,p_action:'delete_bin',p_input:{bin_id:user}});
         assert.equal(writes[0].u.hash,'');resolve();
       } catch(error){reject(error);}
     }));

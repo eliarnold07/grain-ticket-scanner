@@ -41,6 +41,8 @@ try {
       let previewRequests = 0;
       let deletes = 0;
       let archivesFarm = false;
+      const ticketAttempts=[];
+      const testLostResponse=width===390 && role==='admin';
       const successor='00000000-0000-4000-8000-000000000006';
       const longName='Fictional North River Agricultural Partnership and Extended Grain Storage';
       const saved={locations:[{id:successor,name:longName}],drivers:[{id:successor,name:'Fictional Driver With A Long Display Name'}]};
@@ -98,9 +100,14 @@ try {
         if (url.pathname === '/api/bins') return json({ bins: [{id:successor,bin_name:longName,crop_type:'Corn',current_bushels:300,estimated_capacity_bushels:1000,percent_full:30,recent_transactions:[],updated_at:'2026-10-14T12:00:00Z'}], transactions: [] });
         if (url.pathname === '/api/contracts' || url.pathname === '/api/scanner-contracts') return json({ contracts: [{id:successor,contract_id:'FICTIONAL-CORN-1',buyer:longName,commodity:'Corn',contracted_bushels:1000,delivered_bushels:700,remaining_bushels:300,contract_price:4.25,status:'Open'}] });
         if (url.pathname === '/api/extract-ticket') return json({ticket:{ticket_number:'FICTIONAL-SCAN-101',date:'2026-10-15',crop:'Corn',bushels:'100',hauled_from:'Field',delivered_to:'Fictional Elevator',hauled_by:'Fictional Driver'},duplicate:{is_duplicate:false,message:'No duplicate found.'}});
+        if (/^\/api\/ticket-submissions\/[a-f0-9-]{36}$/i.test(url.pathname)) return json({protocol_revision:2,status:'unknown'});
         if (url.pathname === '/api/submit-ticket') {
           assert.equal(route.request().postDataJSON().ticket.ticket_number,'FICTIONAL-SCAN-101');
-          return json({ok:true,message:'Fictional saved'});
+          const requestId=route.request().postDataJSON().request_id;
+          assert.match(requestId,/^[a-f0-9-]{36}$/i);
+          ticketAttempts.push(requestId);
+          if(testLostResponse && ticketAttempts.length===1) return route.abort('failed');
+          return json({ok:true,ticket_log:{id:successor},message:'Fictional saved'});
         }
         if (url.pathname === '/api/users') return json({ users: [] });
         if (url.pathname === '/api/users/invitation') return json({code:'ABCD-EFGH-JKLM-NPQR-STUV'});
@@ -168,7 +175,12 @@ try {
       }
       await page.getByLabel('Moisture',{exact:true}).fill('15.1');
       await page.getByRole('button',{name:'Submit Reviewed Ticket',exact:true}).click();
+      if(testLostResponse) {
+        await page.getByText('Check your connection and try again. Your changes may not have been saved.',{exact:true}).first().waitFor();
+        await page.getByRole('button',{name:'Submit Reviewed Ticket',exact:true}).click();
+      }
       await page.getByRole('heading',{name:'Ticket submitted successfully',exact:true}).waitFor();
+      if(testLostResponse) assert.equal(ticketAttempts[0],ticketAttempts[1],'A lost response must retry the same durable intent');
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
       await page.getByRole('heading', {name:'Settings',exact:true}).waitFor();
       await page.screenshot({path:join(screenshots,`${width}-${role}-settings.png`)});

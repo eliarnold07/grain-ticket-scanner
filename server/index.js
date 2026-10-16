@@ -10,7 +10,8 @@ import { settingsNamesRoutes } from './settingsNamesRoutes.js';
 import { requireUuid, validateApiIds } from './restQuery.js';
 import { farmPermissionGuard } from './farmPermissions.js';
 import {
-  addTicketLog,
+  submitTicketAtomically,
+  ticketRequestStatus,
   farmFeatureRpc,
   authenticateJoinRequest,
   signupInvitedUser,
@@ -19,12 +20,10 @@ import {
   createFarmUserAccount,
   deleteCurrentAccount,
   createInventoryTransaction,
-  createTicketSaleTransaction,
   deleteBin,
   deleteContract,
   deleteInventoryTransaction,
   deleteTicketLog,
-  deleteTicketLogByInventoryTransactionId,
   getInventorySnapshot,
   getAccountDeletionPreview,
   getTicketLogSnapshot,
@@ -134,6 +133,11 @@ app.use('/api', farmPermissionGuard(currentAccount));
 registerFarmInvitationRoutes(app, {
   rpc: farmFeatureRpc, authenticate: authenticateJoinRequest,
   signup: signupInvitedUser, requestAccount: () => currentAccount()
+});
+
+app.get('/api/ticket-submissions/:id', async (req, res) => {
+  try { res.json(await ticketRequestStatus(req.params.id)); }
+  catch { res.status(400).json({ error: 'Could not verify the previous submission.' }); }
 });
 
 function blankTicket() {
@@ -510,7 +514,7 @@ app.put('/api/ticket-logs/:id', async (req, res) => {
     logError('Ticket log update failed', error);
     res.status(400).json({
       error: 'Could not update ticket log.',
-      detail: error.message
+      code: error.code
     });
   }
 });
@@ -518,10 +522,6 @@ app.put('/api/ticket-logs/:id', async (req, res) => {
 app.delete('/api/ticket-logs/:id', async (req, res) => {
   try {
     const deletedLog = await deleteTicketLog(req.params.id);
-
-    if (deletedLog.inventory_transaction_id) {
-      await deleteInventoryTransaction(deletedLog.inventory_transaction_id);
-    }
 
     res.json({
       ok: true,
@@ -751,13 +751,8 @@ app.post('/api/inventory-transactions', async (req, res) => {
 
 app.delete('/api/inventory-transactions/:id', async (req, res) => {
   try {
-    const deletedLog = await deleteTicketLogByInventoryTransactionId(req.params.id);
     const result = await deleteInventoryTransaction(req.params.id);
-
-    res.json({
-      ...result,
-      deleted_ticket_log: deletedLog
-    });
+    res.json(result);
   } catch (error) {
     logError('Inventory transaction delete failed', error);
     res.status(400).json({
@@ -912,26 +907,7 @@ app.post('/api/submit-ticket', async (req, res) => {
   }
 
   try {
-    await validateTicketAccounting(ticket);
-    let inventoryTransactionId = '';
-
-    if (ticket.hauled_from.toLowerCase() !== 'field') {
-      const inventoryResult = await createTicketSaleTransaction({
-        binName: ticket.hauled_from,
-        bushels: ticket.bushels,
-        cropType: ticket.crop,
-        ticketId: ticket.ticket_number,
-        notes: `Ticket sale ${ticket.ticket_number}`,
-        allowOverdraw: req.body?.allow_bin_overdraw === true
-      });
-
-      inventoryTransactionId = inventoryResult?.transaction?.id || '';
-    }
-
-    const ticketLog = await addTicketLog({
-      ...ticket,
-      inventory_transaction_id: inventoryTransactionId
-    });
+    const ticketLog = await submitTicketAtomically(ticket, requireUuid(req.body?.request_id, 'Submission request ID'), req.body?.allow_bin_overdraw === true);
 
     console.log('Reviewed grain ticket submission saved', {
       ticket_number: ticket.ticket_number,
@@ -949,9 +925,8 @@ app.post('/api/submit-ticket', async (req, res) => {
   } catch (error) {
     logError('Ticket submit failed', error);
     const isOverdraw = error.code === 'BIN_INVENTORY_OVERDRAW';
-    res.status(isOverdraw ? 409 : 500).json({
+    res.status(isOverdraw || ['IDEMPOTENCY_CONFLICT','TICKET_ALREADY_EXISTS','CONTRACT_CAPACITY_EXCEEDED','CONTRACT_UNAVAILABLE','CONTRACT_CROP_MISMATCH','LEDGER_RECONCILIATION_REQUIRED','BIN_SELECTION_UNAVAILABLE','TICKET_DELETED'].includes(error.code) ? 409 : error.status || 500).json({
       error: 'Could not save ticket data.',
-      detail: error.message,
       code: error.code,
       bin_name: error.binName,
       current_bushels: error.currentBushels,

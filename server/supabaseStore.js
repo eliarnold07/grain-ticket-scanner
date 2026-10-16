@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
 import { AccountDeletionError, performAccountDeletion } from './accountDeletionService.js';
-import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
-import { canonicalRestPath } from './restQuery.js';
+import { clampBinBalance } from './binCapacity.js';
+import { canonicalRestPath, requireUuid, restQuery } from './restQuery.js';
 
 const requestContext = new AsyncLocalStorage();
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -252,7 +252,7 @@ async function deletionAvailability() {
   try {
     // A flag alone must never reactivate the unsafe multi-request implementation.
     const capability = await serviceDb('rpc/binflow_account_deletion_capability', { method: 'POST', body: {} });
-    return capability?.version === 2 && capability?.revision === 1;
+    return capability?.version === 2 && capability?.revision === 2;
   } catch {
     return false;
   }
@@ -426,201 +426,41 @@ export async function listBins() {
 }
 
 export async function createBin(input) {
-  const { farmId } = context();
-  const now = new Date().toISOString();
-  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
-  const current = clampBinBalance(input.current_bushels, capacity);
-  const rows = await db('bins', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      farm_id: farmId,
-      bin_name: clean(input.bin_name),
-      crop_type: clean(input.crop_type),
-      estimated_capacity_bushels: capacity,
-      current_bushels: current,
-      notes: clean(input.notes),
-      created_at: now,
-      updated_at: now
-    }
-  });
-  const bin = rows[0];
-
-  if (numeric(bin.current_bushels) !== 0) {
-    await db('inventory_transactions', {
-      method: 'POST',
-      body: {
-        farm_id: farmId,
-        bin_id: bin.id,
-        transaction_type: 'MANUAL_ADJUSTMENT',
-        crop_type: bin.crop_type,
-        bushel_amount: numeric(bin.current_bushels),
-        applied_bushel_amount: numeric(bin.current_bushels),
-        previous_bin_balance: 0,
-        new_bin_balance: numeric(bin.current_bushels),
-        notes: 'Initial bin balance'
-      }
-    });
-  }
-
-  return publicBin(bin);
+  const mode = numeric(input.current_bushels) > 0 ? 'bushels' : 'empty';
+  const result = await inventoryCommand('create_bin', { ...input, opening_mode: mode });
+  return publicBin(result.bin);
 }
 
 export async function updateBin(id, input) {
-  const { farmId } = context();
-  const existing = await getBin(id);
-  if (!existing) throw new Error('Bin not found.');
-  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
-  const rows = await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: {
-      bin_name: clean(input.bin_name),
-      crop_type: clean(input.crop_type),
-      estimated_capacity_bushels: capacity,
-      current_bushels: clampBinBalance(existing.current_bushels, capacity),
-      notes: clean(input.notes),
-      updated_at: new Date().toISOString()
-    }
-  });
-  return publicBin(rows[0]);
+  const result = await inventoryCommand('update_bin', { ...input, bin_id: requireUuid(id) });
+  return publicBin(result.bin);
 }
 
-export async function deleteBin(id) {
-  const { farmId } = context();
-  await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  return { ok: true };
-}
-
-async function getBin(id) {
-  const { farmId } = context();
-  const rows = await db(`bins?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
-  return rows[0] || null;
-}
-
-async function getBinByName(name) {
-  const bins = await listBins();
-  return bins.find((bin) => bin.bin_name.toLowerCase() === clean(name).toLowerCase()) || null;
+export function deleteBin(id) {
+  return inventoryCommand('delete_bin', { bin_id: requireUuid(id) });
 }
 
 export async function createInventoryTransaction(input) {
-  const { farmId } = context();
-  const bin = await getBin(input.bin_id);
-  if (!bin) throw new Error('Bin not found.');
-
   const type = clean(input.transaction_type).toUpperCase();
-  const result = applyBinTransaction({
-    previousBalance: bin.current_bushels,
-    capacity: bin.estimated_capacity_bushels,
-    type,
-    amount: input.bushel_amount
-  });
-  const { requested: amount, previous, next, appliedAmount: applied } = result;
-
-  const transactionRows = await db('inventory_transactions', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      farm_id: farmId,
-      bin_id: bin.id,
-      transaction_type: type,
-      crop_type: bin.crop_type,
-      bushel_amount: amount,
-      applied_bushel_amount: applied,
-      previous_bin_balance: previous,
-      new_bin_balance: next,
-      ticket_id: input.ticket_id || null,
-      ticket_number: clean(input.ticket_number),
-      notes: clean(input.notes),
-      exceeded_estimated_inventory: amount > previous && ['REMOVE_GRAIN', 'TICKET_SALE'].includes(type)
-    }
-  });
-  const binRows = await db(`bins?id=eq.${bin.id}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: { current_bushels: next, updated_at: new Date().toISOString() }
-  });
-  return {
-    bin: publicBin(binRows[0]),
-    transaction: transactionRows[0],
-    capacity_capped: result.capacityCapped
-  };
+  if (!['ADD_GRAIN', 'REMOVE_GRAIN', 'MANUAL_ADJUSTMENT'].includes(type)) throw new Error('Use ticket submission for a ticket sale, or a supported inventory adjustment.');
+  const result = await inventoryCommand('transaction', { ...input, bin_id: requireUuid(input.bin_id), transaction_type: type });
+  return { ...result, bin: publicBin(result.bin) };
 }
 
-export async function createTicketSaleTransaction({ binName, bushels, cropType, ticketId, notes, allowOverdraw = false }) {
-  const bin = await getBinByName(binName);
-  if (!bin) return null;
-  const amount = numeric(bushels);
-
-  if (amount > numeric(bin.current_bushels) && !allowOverdraw) {
-    const error = new Error('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
-    error.code = 'BIN_INVENTORY_OVERDRAW';
-    error.binName = bin.bin_name;
-    error.currentBushels = numeric(bin.current_bushels);
-    error.ticketBushels = amount;
-    throw error;
-  }
-
-  if (cropType && cropType !== bin.crop_type) {
-    await updateBin(bin.id, { ...bin, crop_type: cropType });
-  }
-
-  return createInventoryTransaction({
-    bin_id: bin.id,
-    transaction_type: 'TICKET_SALE',
-    bushel_amount: amount,
-    ticket_number: ticketId,
-    notes
-  });
+export function deleteInventoryTransaction(id) {
+  return inventoryCommand('delete_transaction', { id: requireUuid(id) });
 }
 
-async function recalculateBin(binId) {
-  const { farmId } = context();
-  const bin = await getBin(binId);
-  if (!bin) return;
-  const capacity = numeric(bin.estimated_capacity_bushels);
-  const transactions = await db(`inventory_transactions?select=*&farm_id=eq.${farmId}&bin_id=eq.${binId}&order=created_at.asc`);
-  let balance = 0;
-
-  for (const transaction of transactions) {
-    const previous = balance;
-    if (transaction.transaction_type === 'ADD_GRAIN') {
-      balance = clampBinBalance(balance + numeric(transaction.bushel_amount), capacity);
-    }
-    if (['REMOVE_GRAIN', 'TICKET_SALE'].includes(transaction.transaction_type)) {
-      balance = Math.max(0, balance - numeric(transaction.applied_bushel_amount ?? transaction.bushel_amount));
-    }
-    if (transaction.transaction_type === 'MANUAL_ADJUSTMENT') {
-      balance = clampBinBalance(transaction.bushel_amount, capacity);
-    }
-    await db(`inventory_transactions?id=eq.${transaction.id}&farm_id=eq.${farmId}`, {
-      method: 'PATCH',
-      body: { previous_bin_balance: previous, new_bin_balance: balance }
-    });
-  }
-
-  await db(`bins?id=eq.${binId}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    body: { current_bushels: balance, updated_at: new Date().toISOString() }
-  });
+function inventoryCommand(action, input) {
+  return farmFeatureRpc('farm_inventory_command', { p_actor: context().member.user_id, p_action: action, p_input: input });
 }
 
-export async function deleteInventoryTransaction(id) {
-  const { farmId } = context();
-  const rows = await db(`inventory_transactions?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
-  const transaction = rows[0];
-  if (!transaction) return { ok: true, deleted: false };
-  await db(`inventory_transactions?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  await recalculateBin(transaction.bin_id);
-  return { ok: true, deleted: true };
-}
-
-export async function listInventoryTransactions(filters = {}) {
-  const { farmId } = context();
-  let path = `inventory_transactions?select=*&farm_id=eq.${farmId}&order=created_at.desc`;
-  if (filters.bin_id) path += `&bin_id=eq.${filters.bin_id}`;
-  if (filters.transaction_type) path += `&transaction_type=eq.${encodeURIComponent(filters.transaction_type)}`;
-  return db(path);
+export function listInventoryTransactions(filters = {}) {
+  return db(restQuery('inventory_transactions', {
+    select: '*', farm_id: `eq.${context().farmId}`, order: 'created_at.desc',
+    bin_id: filters.bin_id ? `eq.${requireUuid(filters.bin_id)}` : undefined,
+    transaction_type: filters.transaction_type ? `eq.${filters.transaction_type}` : undefined
+  }));
 }
 
 function normalizeTicket(ticket, existing = {}) {
@@ -654,50 +494,40 @@ function normalizeTicket(ticket, existing = {}) {
   };
 }
 
-export async function addTicketLog(ticket) {
-  const { farmId, user, member } = context();
-  const rows = await db('tickets', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      farm_id: farmId,
-      ...normalizeTicket(ticket),
-      scanned_by_user_id: user.id,
-      scanned_by_name: clean(member.display_name) || clean(member.email) || 'Farm user',
-      created_at: new Date().toISOString()
+export async function submitTicketAtomically(ticket, requestId, allowOverdraw = false) {
+  try {
+    const { updated_at, ...stableTicket } = normalizeTicket(ticket);
+    const result = await farmFeatureRpc('farm_ticket_command', {
+      p_actor: context().member.user_id, p_action: 'submit', p_id: null,
+      p_input: { ...stableTicket, allow_overdraw: allowOverdraw }, p_request: requireUuid(requestId)
+    });
+    return result.ticket;
+  } catch (error) {
+    for (const code of ['BIN_INVENTORY_OVERDRAW','IDEMPOTENCY_CONFLICT','TICKET_ALREADY_EXISTS','CONTRACT_CAPACITY_EXCEEDED','CONTRACT_UNAVAILABLE','CONTRACT_CROP_MISMATCH','LEDGER_RECONCILIATION_REQUIRED','BIN_SELECTION_UNAVAILABLE','TICKET_DELETED']) {
+      if (error.message.includes(code)) error.code = code;
     }
-  });
-  return rows[0];
+    throw error;
+  }
+}
+
+export function ticketRequestStatus(requestId) {
+  return farmFeatureRpc('ticket_request_status', { p_actor: context().member.user_id, p_request: requireUuid(requestId) });
 }
 
 export async function updateTicketLog(id, input) {
   const { farmId } = context();
-  const existing = (await db(`tickets?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`))[0];
+  const existing = (await db(restQuery('tickets', { select: '*', id: `eq.${requireUuid(id)}`, farm_id: `eq.${farmId}`, limit: 1 })))[0];
   if (!existing) throw new Error('Ticket not found.');
-  const ticket = normalizeTicket(input, existing);
-  delete ticket.id;
-  delete ticket.farm_id;
-  delete ticket.created_at;
-  const rows = await db(`tickets?id=eq.${id}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: ticket
-  });
-  await db('payments?on_conflict=farm_id,ticket_id', {
-    method: 'POST',
-    prefer: 'resolution=merge-duplicates',
-    body: {
-      farm_id: farmId,
-      ticket_id: id,
-      payment_status: ticket.payment_status,
-      payment_date: ticket.payment_date,
-      amount_received: ticket.amount_received,
-      reference: ticket.payment_reference,
-      notes: ticket.payment_notes,
-      updated_at: new Date().toISOString()
-    }
-  });
-  return rows[0];
+  try {
+    const result = await farmFeatureRpc('farm_ticket_command', {
+      p_actor: context().member.user_id, p_action: 'update', p_id: requireUuid(id),
+      p_input: normalizeTicket(input, existing), p_request: null
+    });
+    return result.ticket;
+  } catch(error) {
+    for(const code of ['INVENTORY_EDIT_REQUIRES_REENTRY','CONTRACT_CAPACITY_EXCEEDED','CONTRACT_UNAVAILABLE','CONTRACT_CROP_MISMATCH']) if(error.message.includes(code)) error.code=code;
+    throw error;
+  }
 }
 
 export async function getTicketLogSnapshot() {
@@ -736,19 +566,10 @@ export async function listTicketLogs(filters = {}) {
 }
 
 export async function deleteTicketLog(id) {
-  const { farmId } = context();
-  const rows = await db(`tickets?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
-  if (!rows[0]) throw new Error('Ticket not found.');
-  await db(`tickets?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  return rows[0];
-}
-
-export async function deleteTicketLogByInventoryTransactionId(transactionId) {
-  const { farmId } = context();
-  const rows = await db(`tickets?select=*&inventory_transaction_id=eq.${transactionId}&farm_id=eq.${farmId}&limit=1`);
-  if (!rows[0]) return null;
-  await db(`tickets?id=eq.${rows[0].id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  return rows[0];
+  const result = await farmFeatureRpc('farm_ticket_command', {
+    p_actor: context().member.user_id, p_action: 'delete', p_id: requireUuid(id), p_input: {}, p_request: null
+  });
+  return result.deleted_ticket_log;
 }
 
 function contractWithBalances(contract, tickets) {

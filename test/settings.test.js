@@ -16,7 +16,9 @@ test('runtime farm permission middleware denies Employee management APIs, not ju
   const base=`http://127.0.0.1:${server.address().port}`;
   try {
     for(const path of ['/users','/users/invitation','/locations','/drivers','/bins','/contracts']) assert.equal((await fetch(base+'/api'+path)).status,403);
-    for(const path of ['/session','/dropdowns','/account-deletion']) assert.equal((await fetch(base+'/api'+path)).status,200);
+    for(const path of ['/session','/dropdowns','/account-deletion','/ticket-submissions/00000000-0000-4000-8000-000000000001']) assert.equal((await fetch(base+'/api'+path)).status,200);
+    assert.equal((await fetch(base+'/api/ticket-submissions/invalid')).status,403);
+    assert.equal((await fetch(base+'/api/ticket-submissions/00000000-0000-4000-8000-000000000001',{method:'DELETE'})).status,403);
     assert.equal((await fetch(base+'/api/users/id/role',{method:'PATCH'})).status,403);
     role='admin'; assert.equal((await fetch(base+'/api/users')).status,200);
   } finally { await new Promise(resolve=>server.close(resolve)); }

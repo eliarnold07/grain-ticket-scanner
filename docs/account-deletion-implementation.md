@@ -1,5 +1,12 @@
 # Personal Account Deletion
 
+Release correction: backend now requires version 2/**revision 2**, including the
+verified grain-command capability path for Employee ticket sales. The standalone
+incremental revision-1 upgrade is provided separately; never reapply the full
+proposal to an existing installation. See ios-release-deployment-package.md for
+the authoritative staged/production sequence. All production activation remains
+approval-gated; missing staging credentials are not a passing integration result.
+
 Implementation branch: `feature/ios-app-store`. Production deployment and SQL execution require separate approval. No farm closure is implemented by this feature.
 
 ## User Experience

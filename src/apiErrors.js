@@ -6,6 +6,15 @@ const messages = new Set([
   'Could not prepare this photo for upload.', 'Could not read the selected photo.'
 ]);
 const codes = Object.freeze({
+  IDEMPOTENCY_CONFLICT: 'An earlier submission may already be saved. Check Previous Submission before starting another ticket.',
+  TICKET_ALREADY_EXISTS: 'This ticket is already saved. Review the existing ticket instead of submitting it again.',
+  TICKET_DELETED: 'This submission was saved and later deleted. Check Previous Submission before starting another ticket.',
+  CONTRACT_CAPACITY_EXCEEDED: 'The contract has less room now. Refresh contracts and review this ticket allocation.',
+  CONTRACT_UNAVAILABLE: 'That contract is no longer open. Choose another contract or spot.',
+  CONTRACT_CROP_MISMATCH: 'Choose a contract for the same commodity as this ticket.',
+  LEDGER_RECONCILIATION_REQUIRED: 'This bin needs an inventory review by an Administrator before another change can be saved.',
+  INVENTORY_EDIT_REQUIRES_REENTRY: 'To change saved bushels, commodity, or source, an Administrator must reverse this ticket and review a new submission.',
+  BIN_SELECTION_UNAVAILABLE: 'The source bin is no longer available or has an ambiguous name. Refresh bins and choose one before saving.',
   LAST_ADMIN_REQUIRED: 'Your farm needs an Administrator. Choose another Administrator first.',
   FARM_MEMBERSHIP_CHANGED: 'Your farm access has changed. Please log in again.',
   ADMIN_ACCESS_REQUIRED: 'An Administrator must make this change.',

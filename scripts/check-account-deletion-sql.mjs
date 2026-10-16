@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 // Local in-memory tests, never claimed as real Supabase Auth/concurrency tests.
 const { PGlite } = await import(process.env.BINFLOW_PGLITE_MODULE ? pathToFileURL(process.env.BINFLOW_PGLITE_MODULE).href : '@electric-sql/pglite');
-for (const hardened of [false, ...(process.env.BINFLOW_HARDENING_MIGRATIONS ? [true] : [])]) {
+for (const hardened of [false, true]) {
   const db = new PGlite();
   const admin = '00000000-0000-4000-8000-000000000001';
   const employee = '00000000-0000-4000-8000-000000000002';
@@ -34,7 +34,7 @@ for (const hardened of [false, ...(process.env.BINFLOW_HARDENING_MIGRATIONS ? [t
     await db.query(`insert into public.weekly_summary_deliveries(farm_id,period_start,period_end,recipients,status,activity_count) values($1,now()-interval '1 week',now(),'["employee@example.invalid","admin@example.invalid"]','sent',1)`,[farm]);
     await db.query('insert into auth.sessions(user_id) values($1)',[employee]);
     if (hardened) {
-      for (const file of ['004_inventory_estimates.sql','005_grain_command_protocol.sql']) await db.exec(await readFile(join(process.env.BINFLOW_HARDENING_MIGRATIONS,file),'utf8'));
+      for (const file of ['004_inventory_estimates.sql','005_grain_command_protocol.sql','007_application_table_grants.sql','008_release_grain_integrity.sql']) await db.exec(await readFile(join('supabase/migrations',file),'utf8'));
     }
     await db.exec(await readFile('docs/sql/proposed-farm-invitations.sql','utf8'));
     await db.exec(await readFile('docs/sql/proposed-invitation-wall-clock.sql','utf8'));

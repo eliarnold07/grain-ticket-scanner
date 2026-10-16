@@ -1,5 +1,10 @@
 # Update The Existing iPhone App
 
+For the current release, SATURDAY-RELEASE-HANDOFF.md and
+ios-release-deployment-package.md supersede the earlier deployment order below.
+Atomic grain writes and account revision 2 must ship as a compatible pair; do not
+use the old actor-header-only rollout with an incompatible direct-write backend.
+
 Use the existing `feature/ios-app-store` checkout. Keep its native `project.pbxproj`, `Info.plist`, `SceneDelegate.swift`, `Package.swift` and untracked SwiftPM directory. This feature changes none of those paths. No reset, clean, force-push, full-branch production merge or full Capacitor sync is needed.
 
 ## Mac: Back Up And Fast-Forward
@@ -75,7 +80,7 @@ npm install --prefix "$HOME/.binflow-test-runtime" embedded-postgres@17.10.0-bet
 BINFLOW_EMBEDDED_POSTGRES_MODULE="$HOME/.binflow-test-runtime/node_modules/embedded-postgres/dist/index.js" npm run check:account-concurrency
 ```
 
-On Windows use the installed local runtime path under `%LOCALAPPDATA%/BinFlowTestRuntime` instead. No system database user/service is created. The disposable loopback cluster is stopped and its verified temporary directory removed. Set `BINFLOW_HARDENING_MIGRATIONS` to an existing read-only hardening checkout's `supabase/migrations` to repeat SQL/concurrency checks with the actual 004/005 inventory guards. This does not merge that branch.
+On Windows use the installed local runtime path under `%LOCALAPPDATA%/BinFlowTestRuntime` instead. No system database user/service is created. The disposable loopback cluster is stopped and its verified temporary directory removed. Tests now load this branch's reviewed 004/005/007/008 directly; no external hardening checkout or BINFLOW_HARDENING_MIGRATIONS override is required.
 
 The browser script accepts `BINFLOW_PLAYWRIGHT_MODULE` pointing at a locally installed Playwright entry module, and `BINFLOW_BROWSER_CHANNEL=chrome`/`msedge`. Run `node scripts/check-account-settings.mjs`. No actual login or production API call is performed by those fictional browser fixtures.
 
@@ -92,4 +97,4 @@ No production deployment, schema change, feature-flag activation, canary account
 
 Disable new deletion requests first and account for in-flight database transactions; a client timeout is not cancellation. Retain safe JSON unavailable responses. If needed, revoke service-role execution of the deletion RPC under incident approval. Revert backend code only with its matching membership/schema contract; do not restore old direct membership writers while the new grants are installed. Keep archival columns/constraints in place until an approved reversal is validated, and do not automatically drop privacy state or restore production-wide backups. Failed SQL transactions roll back; committed personal deletions cannot be undone by reverting code.
 
-Existing dependency audit warnings are not automatically fixed in this scoped change. New development-only `pg`/PGlite dependencies are not included in the frontend bundle; review the existing server/toolchain advisories as a separate release gate.
+See release-dependency-security.md: targeted compatible patches are now applied and both npm audit modes return zero known findings. Development-only pg/PGlite are not bundled in the frontend. Hosted backend patch deployment remains separately approved.

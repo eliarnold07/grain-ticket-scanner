@@ -79,7 +79,7 @@ create trigger binflow_preserve_farm before update or delete on public.farms
 
 create function private.binflow_active_writer() returns trigger
 language plpgsql security definer set search_path=pg_catalog as $$
-declare f uuid; a uuid; claims_role text;
+declare f uuid; a uuid; claims_role text; trusted_grain boolean:=false;
 begin
   if tg_op='UPDATE' and new.farm_id is distinct from old.farm_id then raise exception 'FARM_RECORD_MOVE_FORBIDDEN'; end if;
   if tg_op='DELETE' then f:=old.farm_id; else f:=new.farm_id; end if;
@@ -118,6 +118,15 @@ begin
     if tg_op='DELETE' then return old; else return new; end if;
   end if;
   if a is null or not exists(select 1 from public.farm_accounts where user_id=a and farm_id=f) then raise exception 'FARM_MEMBERSHIP_CHANGED'; end if;
+  if tg_table_name in ('bins','tickets','inventory_transactions','payments') and to_regclass('private.grain_writers') is not null then
+    execute 'select exists(select 1 from private.grain_writers where transaction_id=txid_current() and farm_id=$1 and actor=$2)'
+      into trusted_grain using f,a;
+  end if;
+  -- The guarded command checks Employee sale versus Admin management itself.
+  -- Direct writes still have no unforgeable transaction-local capability.
+  if trusted_grain then
+    if tg_op='DELETE' then return old; else return new; end if;
+  end if;
   if tg_op <> 'INSERT' or tg_table_name not in ('tickets','inventory_transactions','payments') then
     if not exists(select 1 from public.farm_accounts where user_id=a and farm_id=f and role='admin') then raise exception 'ADMIN_ACCESS_REQUIRED'; end if;
   end if;
@@ -255,7 +264,8 @@ language sql security definer set search_path=pg_catalog as $$
   select case when auth.role()='service_role' and to_regprocedure('public.binflow_delete_account(uuid,uuid,text,uuid)') is not null
     and position('FARM_RECORD_MOVE_FORBIDDEN' in pg_get_functiondef('private.binflow_active_writer()'::regprocedure))>0
     and position('CROSS_FARM_RELATIONSHIP' in pg_get_functiondef('private.binflow_active_writer()'::regprocedure))>0
-    then jsonb_build_object('version',2,'revision',1) else null end
+    and position('trusted_grain' in pg_get_functiondef('private.binflow_active_writer()'::regprocedure))>0
+    then jsonb_build_object('version',2,'revision',2) else null end
 $$;
 revoke insert,update,delete on public.farm_accounts from public,anon,authenticated,service_role;
 revoke all on function private.binflow_lock_membership(),private.binflow_validate_provisioner(),private.binflow_membership_invariant(),private.binflow_preserve_farm(),private.binflow_active_writer() from public,anon,authenticated,service_role;

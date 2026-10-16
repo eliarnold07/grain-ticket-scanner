@@ -31,9 +31,7 @@ try {
     create table auth.sessions(user_id uuid references auth.users(id) on delete cascade);
     create table storage.objects(owner_id text); create table storage.buckets(owner_id text);`);
   for(const file of ['001_private_beta.sql','002_farm_roles.sql','003_weekly_summary_deliveries.sql']) await a.query(await readFile(join('supabase/migrations',file),'utf8'));
-  if(process.env.BINFLOW_HARDENING_MIGRATIONS) {
-    for(const file of ['004_inventory_estimates.sql','005_grain_command_protocol.sql']) await a.query(await readFile(join(process.env.BINFLOW_HARDENING_MIGRATIONS,file),'utf8'));
-  }
+  for(const file of ['004_inventory_estimates.sql','005_grain_command_protocol.sql','007_application_table_grants.sql','008_release_grain_integrity.sql']) await a.query(await readFile(join('supabase/migrations',file),'utf8'));
   await a.query(await readFile('docs/sql/proposed-farm-invitations.sql','utf8'));
   await a.query(await readFile('docs/sql/proposed-invitation-wall-clock.sql','utf8'));
   await a.query(await readFile('docs/sql/proposed-account-deletion.sql','utf8'));
@@ -63,6 +61,26 @@ try {
   assert.match((await delayedJoin).error?.message || '',/Invitation expired/);
   assert.equal((await observer.query('select role from public.farm_accounts where user_id=$1',[ids[2]])).rows[0].role,'employee');
   console.log('PASS real PostgreSQL: concurrent saved-name edits preserve both entries; lock-delayed invitation expires without changing membership.');
+  const roleAdmin=randomUUID(),roleSecond=randomUUID(),roleEmployee=randomUUID();
+  await observer.query("set request.jwt.claim.role=''");
+  await observer.query("insert into auth.users(id,email) values($1,'role-admin@example.invalid')",[roleAdmin]);
+  const roleFarm=(await observer.query('select farm_id from public.farm_accounts where user_id=$1',[roleAdmin])).rows[0].farm_id;
+  for(const [id,email] of [[roleSecond,'role-second@example.invalid'],[roleEmployee,'role-employee@example.invalid']]) await observer.query('insert into auth.users(id,email,raw_app_meta_data) values($1,$2,$3)',[id,email,JSON.stringify({farm_role:'employee',farm_id:roleFarm})]);
+  await observer.query("set request.jwt.claim.role='service_role'");
+  await a.query('select public.binflow_change_member($1,$2,$3)',[roleAdmin,roleSecond,'admin']);
+  await a.query('begin');
+  await a.query('select public.binflow_change_member($1,$2,$3)',[roleAdmin,roleSecond,'employee']);
+  const rolePid=(await b.query('select pg_backend_pid() as pid')).rows[0].pid;
+  const roleDelete=b.query('select public.binflow_delete_account($1,$2,$3,null)',[roleAdmin,roleFarm,'role-admin@example.invalid']).then(value=>({value}),error=>({error}));
+  let roleWaiting=false;
+  for(let n=0;n<100;n++) {
+    if((await observer.query('select wait_event_type from pg_stat_activity where pid=$1',[rolePid])).rows[0]?.wait_event_type==='Lock'){roleWaiting=true;break;}
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  assert.equal(roleWaiting,true); await a.query('commit');
+  assert.match((await roleDelete).error?.message||'',/OWNERSHIP_TRANSFER_REQUIRED/);
+  assert.equal((await observer.query("select count(*)::int as n from public.farm_accounts where farm_id=$1 and role='admin'",[roleFarm])).rows[0].n,1);
+  console.log('PASS real PostgreSQL: Admin demotion versus deletion waits on the same lock and rechecks last-Admin/successor requirements.');
   const remove=(c,id,email,successor=null)=>c.query('select public.binflow_delete_account($1,$2,$3,$4)',[id,farm,email,successor]);
   const results=await Promise.allSettled([remove(a,ids[0],'first@example.invalid'),remove(b,ids[1],'second@example.invalid')]);
   assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
@@ -93,11 +111,8 @@ try {
   assert.equal((await observer.query('select count(*)::int as n from public.farm_accounts where user_id=$1',[ids[2]])).rows[0].n,1);
   // A queued service write must recheck membership after the deletion lock ends.
   let bin;
-  if(process.env.BINFLOW_HARDENING_MIGRATIONS) {
+  {
     bin=(await observer.query('select public.farm_inventory_command($1,$2,$3) as result',[ids[2],'create_bin',JSON.stringify({bin_name:'Fictional Concurrent Bin',crop_type:'Corn',estimated_capacity_bushels:1000,current_bushels:0,opening_mode:'bushels'})])).rows[0].result.bin.id;
-  } else {
-    await observer.query(`set request.jwt.claim.role='';`);
-    bin=(await observer.query('insert into public.bins(farm_id,bin_name) values($1,$2) returning id',[farm,'Fictional Concurrent Bin'])).rows[0].id;
   }
   await observer.query(`set request.jwt.claim.role='service_role';`);
   await a.query('begin');
