@@ -26,6 +26,11 @@ ordered ten SQL files and OFF flags. Keep the accepted pre-commit package unchan
 The committed archive is a develop-base website plus committed reviewed overlays,
 NOT the whole iOS branch. Source ID changes for the assembler provenance fix and
 CRLF normalization are reported explicitly; SQL may differ only in line endings.
+The assembler forces core.autocrlf=false for both Git archives: Windows local Git
+settings cannot change committed SQL bytes. Canonical ordered SQL hashes must
+match the accepted LF SQL hashes exactly. An initial archive validation exposed
+this issue; its superseded artifact is retained, not silently replaced. The local
+follow-up commit corrects packaging only; application/SQL behavior is unchanged.
 
 Before any later execution, in a separately reviewed integration checkout built
 from that manifest, require the exact same 127 path/content hashes. A commit ID

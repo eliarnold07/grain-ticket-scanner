@@ -20,11 +20,11 @@ if(releaseCommit) {
   // Read only committed blobs, never unrelated or ignored working-tree files.
   source=join(root,'committed-input');await mkdir(source);
   const inputTar=join(root,'committed-input.tar');
-  execFileSync('git',['archive','--format=tar',`--output=${inputTar}`,releaseCommit]);
+  execFileSync('git',['-c','core.autocrlf=false','archive','--format=tar',`--output=${inputTar}`,releaseCommit]);
   execFileSync('tar',['-xf',inputTar,'-C',source]);
 }
 const baseTar=join(root,'base.tar');
-execFileSync('git',['archive','--format=tar',`--output=${baseTar}`,base]);
+execFileSync('git',['-c','core.autocrlf=false','archive','--format=tar',`--output=${baseTar}`,base]);
 execFileSync('tar',['-xf',baseTar,'-C',tree]);
 for(const directory of ['server','src','scripts','test','fixtures','supabase','docs/sql']) await cp(join(source,directory),join(tree,directory),{recursive:true});
 for(const file of ['package.json','package-lock.json','vite.mobile.config.js','capacitor.config.json','.node-version','.github/workflows/deploy-pages.yml']) await cp(join(source,file),join(tree,file));
