@@ -1,3 +1,4 @@
+import { readJsonWithTimeout } from './network.js';
 const fallback = 'We could not complete that request. Please try again.';
 const messages = new Set([
   'Invalid login credentials', 'Email not confirmed', 'User already registered',
@@ -6,6 +7,9 @@ const messages = new Set([
   'Could not prepare this photo for upload.', 'Could not read the selected photo.'
 ]);
 const codes = Object.freeze({
+  INVITATION_INVALID: 'That farm code is not valid. Check it with your farm Administrator.',
+  INVITATION_EXPIRED: 'This invitation expired or was replaced. Enter the current farm code again.',
+  INVITATION_RATE_LIMITED: 'Too many code attempts. Wait 15 minutes before trying again.',
   RELEASE_MAINTENANCE: 'BinFlow is being updated. Your changes were not submitted. Please try again shortly.',
   CLIENT_UPDATE_REQUIRED: 'BinFlow has been updated. Refresh the website or update the iPhone app before saving this ticket.',
   IDEMPOTENCY_CONFLICT: 'An earlier submission may already be saved. Check Previous Submission before starting another ticket.',
@@ -38,6 +42,10 @@ export function cleanMessage(error) {
   return fallback;
 }
 
+export function isInvalidSessionError(error) {
+  return [400, 401, 403].includes(error?.status);
+}
+
 export function authErrorMessage(data, status) {
   if (data?.error_code === 'invalid_credentials' || data?.code === 'invalid_credentials') return 'Invalid login credentials';
   if (data?.error_code === 'email_not_confirmed' || data?.code === 'email_not_confirmed') return 'Email not confirmed';
@@ -49,7 +57,7 @@ export function authErrorMessage(data, status) {
 
 export async function readErrorResponse(response) {
   let data;
-  try { data = await response.json(); } catch { /* HTML proxy errors are never displayed. */ }
+  try { data = await readJsonWithTimeout(response); } catch { /* HTML proxy errors are never displayed. */ }
   if (codes[data?.code] || codes[data?.detail]) return codes[data.code] || codes[data.detail];
   if (response.status === 401) return 'Your session has expired. Please log in again.';
   if (response.status === 403) return 'An Administrator must make this change.';

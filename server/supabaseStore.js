@@ -351,6 +351,7 @@ export async function updateFarmUserRole(userId, requestedRole) {
   const { farmId, role } = context();
   if (role !== 'admin') throw new Error('Only farm admins can change user roles.');
   if (!supabaseServiceRoleKey) throw new Error('Role changes require SUPABASE_SERVICE_ROLE_KEY.');
+  if (!['admin', 'employee'].includes(requestedRole)) throw new Error('INVALID_FARM_ROLE');
 
   return serviceDb('rpc/binflow_change_member', {
     method: 'POST',

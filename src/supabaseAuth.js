@@ -1,5 +1,5 @@
 import { authErrorMessage } from './apiErrors.js';
-import { fetchWithTimeout } from './network.js';
+import { fetchWithTimeout, readJsonWithTimeout } from './network.js';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const SESSION_KEY = 'binflow-supabase-session';
@@ -20,7 +20,9 @@ async function authRequest(path, body) {
     },
     body: JSON.stringify(body)
   }, 20000);
-  const data = await response.json().catch(() => ({}));
+  let data;
+  try { data = await readJsonWithTimeout(response); }
+  catch (error) { if (response.ok) throw error; data = {}; }
 
   if (!response.ok) {
     const error = new Error(authErrorMessage(data, response.status));
@@ -65,12 +67,14 @@ export async function signUpFarm({ farmName, email, password }) {
 
 export async function signInFarm({ email, password }, { persist = true } = {}) {
   const data = await authRequest('token?grant_type=password', { email, password });
+  if (!data?.access_token || !data.user?.id) throw new Error('Invalid authentication response');
   if (persist) storeSession(data);
   return data;
 }
 
 export async function refreshSession(refreshToken) {
   const data = await authRequest('token?grant_type=refresh_token', { refresh_token: refreshToken });
+  if (!data?.access_token || !data.user?.id) throw new Error('Invalid authentication response');
   storeSession(data);
   return data;
 }

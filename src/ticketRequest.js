@@ -1,3 +1,5 @@
+import { readJsonWithTimeout } from './network.js';
+
 function key(userId) { return `binflow-pending-ticket:${userId}`; }
 function uuid() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -22,8 +24,8 @@ export function confirmedTicketReceipt(data) {
   return data.ticket_log;
 }
 export async function requireAtomicTicketWrites(apiFetch, requestId) {
-  const response = await apiFetch(`/api/ticket-submissions/${requestId}`);
-  const data = await response.json().catch(() => null);
+  const response = await apiFetch(`/api/ticket-submissions/${requestId}`, { timeoutMs: 20000 });
+  const data = await readJsonWithTimeout(response).catch(() => null);
   if (!response.ok || data?.protocol_revision !== 2 || !['unknown', 'committed', 'deleted'].includes(data.status)) {
     throw new Error('This feature is temporarily unavailable. Ticket saving needs the compatible BinFlow service update; your ticket has not been sent.');
   }

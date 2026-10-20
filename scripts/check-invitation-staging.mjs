@@ -46,6 +46,8 @@ try {
     return {status:response.status,data:await response.json()};
   };
   const preview=(worker,code,forwarded)=>api(worker,'/farm-invites/preview',{body:{code},forwarded});
+  phase='explicit server-only invitation capability';
+  assert.equal((await api(0,'/app-capabilities')).data.farm_invitations,true);
   phase='real invitation creation and Employee assignment';
   assert.equal((await api(0,'/users/invitation')).status,401);
   const invitation=await api(0,'/users/invitation',{actor:admin});assert.equal(invitation.status,200);
@@ -57,10 +59,23 @@ try {
   const pending=await preview(1,invitation.data.code,'203.0.113.12');
   assert.equal((await api(1,'/farm-invites/accept',{actor:outsider,body:{join_token:pending.data.join_token}})).status,400);
   assert.equal((await observer.query('select farm_id from public.farm_accounts where user_id=$1',[outsider.id])).rows[0].farm_id,outsider.farm_id);
-  const rotated=await api(1,'/users/invitation/rotate',{actor:admin,body:{}});assert.equal(rotated.status,200);assert.notEqual(rotated.data.code,invitation.data.code);
+  let rotated=await api(1,'/users/invitation/rotate',{actor:admin,body:{}});assert.equal(rotated.status,200);assert.notEqual(rotated.data.code,invitation.data.code);
   assert.equal((await preview(0,invitation.data.code,'203.0.113.13')).status,400);
   assert.equal((await api(0,'/farm-invites/accept',{actor:employee,body:{join_token:pending.data.join_token}})).status,400);
   assert.ok((await preview(1,rotated.data.code,'203.0.113.14')).data.join_token);
+  phase='real revoke, pending-token invalidation and fresh-code reissue';
+  const revocationToken=(await preview(0,rotated.data.code,'203.0.113.15')).data.join_token;
+  assert.ok(revocationToken);
+  assert.equal((await api(1,'/users/invitation/revoke',{actor:employee,body:{}})).status,403);
+  const outsiderCode=await api(0,'/users/invitation',{actor:outsider});assert.equal(outsiderCode.status,200);
+  const revoked=await api(1,'/users/invitation/revoke',{actor:admin,body:{farm_id:outsider.farm_id,user_id:outsider.id}});
+  assert.equal(revoked.status,200);assert.equal(revoked.data.revoked,true);
+  assert.equal((await preview(0,rotated.data.code,'203.0.113.16')).status,400);
+  assert.equal((await observer.query('select count(*)::int n from private.farm_join_tokens where id=$1',[revocationToken])).rows[0].n,0);
+  assert.equal((await api(0,'/users/invitation',{actor:outsider})).data.code,outsiderCode.data.code);
+  const previousCode=rotated.data.code;
+  rotated=await api(1,'/users/invitation',{actor:admin});assert.equal(rotated.status,200);assert.notEqual(rotated.data.code,previousCode);
+  assert.equal((await observer.query('select role from public.farm_accounts where user_id=$1 and farm_id=$2',[employee.id,admin.farm_id])).rows[0].role,'employee');
   phase='persistent rate limiting across workers and spoofed forwarding headers';
   assert.equal((await preview(0,'invalid','198.51.100.1, 203.0.113.20')).status,400);
   assert.equal((await preview(1,'invalid','198.51.100.2, 203.0.113.20')).status,400);
@@ -82,7 +97,7 @@ try {
   await wait();await observer.query('select pg_sleep(1.1)');await first.query('commit');
   assert.match((await join).error?.message||'',/Invitation expired/);
   assert.equal((await observer.query('select role from public.farm_accounts where user_id=$1',[employee.id])).rows[0].role,'employee');
-  console.log(`PASS ${STAGING_REF}: actual Auth invitation membership, malicious role metadata ignored, second-farm refusal, rotation/token invalidation, persistent cross-worker rate limits, spoof resistance, fail-closed proxy configuration and observed lock-delayed expiry.`);
+  console.log(`PASS ${STAGING_REF}: actual Auth invitation membership, malicious role metadata ignored, second-farm refusal, rotation/revoke/token invalidation, cross-farm revoke isolation, persistent cross-worker rate limits, spoof resistance, fail-closed proxy configuration and observed lock-delayed expiry.`);
   console.log('Local proxy-chain simulation only; real hosted ingress remains unverified. Fictional fixtures remain in disposable staging.');
 } catch(error) {
   console.error(`Invitation staging validation stopped at ${phase} (${String(error.code||error.name||'Error').replace(/[^a-zA-Z0-9_]/g,'')}). No credentials printed.`);process.exitCode=1;

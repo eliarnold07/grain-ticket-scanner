@@ -45,3 +45,12 @@ test('an account switch during a preflight/confirmation cannot send the previous
   await postTicketForActor(apiFetch,()=> 'original-user','original-user',{});
   assert.equal(calls,1);
 });
+
+test('scanner compatibility checks use a bounded request and reject malformed response bodies', async () => {
+  const apiFetch=async(path,options)=>{
+    assert.equal(path,'/api/ticket-submissions/fictional-intent');
+    assert.equal(options.timeoutMs,20000);
+    return new Response('not-json');
+  };
+  await assert.rejects(requireAtomicTicketWrites(apiFetch,'fictional-intent'),/Ticket saving needs the compatible/);
+});

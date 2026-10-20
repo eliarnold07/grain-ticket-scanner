@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { signInFarm, signOutFarm } from './supabaseAuth.js';
 import { cleanMessage, readErrorResponse } from './apiErrors.js';
-import { fetchWithTimeout } from './network.js';
+import { fetchWithTimeout, readJsonWithTimeout } from './network.js';
 
 export default function JoinFarm({ apiBase, onSession, onLogin }) {
   const [code, setCode] = useState('');
@@ -13,7 +13,7 @@ export default function JoinFarm({ apiBase, onSession, onLogin }) {
   const [message, setMessage] = useState('');
   const lock = useRef(false);
   const active = useRef(true);
-  useEffect(() => () => { active.current = false; }, []);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   async function submit(event) {
     event.preventDefault();
     if (lock.current) return;
@@ -27,7 +27,7 @@ export default function JoinFarm({ apiBase, onSession, onLogin }) {
         body: JSON.stringify(preview ? { join_token: preview.join_token, email, password } : { code })
       }, 20000);
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       if (!active.current) {
         if (session || data.access_token) await signOutFarm((session || data).access_token, { clearLocal: false });
         return;
@@ -41,9 +41,8 @@ export default function JoinFarm({ apiBase, onSession, onLogin }) {
       else { setPreview(null); onLogin('Check your email to confirm your account, then log in.'); }
     } catch (error) {
       if (session) await signOutFarm(session.access_token, { clearLocal: false });
-      setMessage(cleanMessage(error));
-      setPreview(null);
-    } finally { setPassword(''); setBusy(false); lock.current = false; }
+      if (active.current) { setMessage(cleanMessage(error)); setPreview(null); }
+    } finally { if (active.current) { setPassword(''); setBusy(false); } lock.current = false; }
   }
   return <form onSubmit={submit} aria-busy={busy}>
     <h2>{preview ? `Join ${preview.farm_name}` : 'Join your farm'}</h2>

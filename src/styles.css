@@ -2425,6 +2425,27 @@ h3 {
 .ocr-consent p { font-size: .85rem; color: var(--muted); line-height: 1.5; }
 .farm-invitation input { width: 100%; font-size: 16px; }
 .users-panel .user-management-grid { grid-template-columns: minmax(0, 1fr); }
+
+.photo-target { min-height: 190px; padding: 24px; touch-action: manipulation; }
+.photo-target:focus-visible { outline: 3px solid var(--forest-800); outline-offset: 3px; }
+.photo-target:disabled, .capture-actions button:disabled { opacity: .6; cursor: wait; }
+.photo-preview { min-height: 190px; max-height: 360px; cursor: default; }
+.photo-preview img { max-height: 356px; }
+.photo-file-input { display: none; }
+.photo-feedback { margin: 10px 0; color: var(--forest-900); line-height: 1.5; overflow-wrap: anywhere; }
+.photo-feedback a { display: inline-block; padding: 8px; text-decoration: underline; }
+.capture-actions button { min-height: 48px; padding: 8px; border: 1px solid var(--stone-300); border-radius: 8px; background: var(--stone-50); color: var(--forest-900); }
+.remove-photo, .capture-panel > .text-button { min-height: 44px; padding: 8px 4px; border: 0; background: transparent; color: var(--forest-900); text-decoration: underline; }
+.scanner-data-status { color: var(--muted); font-size: .875rem; }
+.legacy-user-access { margin: 12px 0; }
+.legacy-user-access summary { padding: 12px 0; cursor: pointer; }
+.farm-invitation .settings-actions { flex-wrap: wrap; }
+.farm-invitation .settings-actions button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--stone-300); border-radius: 8px; background: var(--stone-50); color: var(--forest-900); }
+.users-panel .farm-user-list { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.users-panel .farm-user-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.users-panel .farm-user-role-actions { flex-wrap: wrap; }
+.users-panel .farm-user-role-actions button { min-height: 44px; }
+@media (min-width: 720px) { .users-panel .farm-user-row { grid-template-columns: minmax(0, 1fr) auto; } }
 .users-panel .farm-user-row { gap: 12px; }
 .users-panel .farm-user-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

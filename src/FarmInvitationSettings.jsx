@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cleanMessage, readErrorResponse } from './apiErrors.js';
+import { readJsonWithTimeout } from './network.js';
 
 // Uses the existing invitation API; never fabricates or persists an invite code.
 export default function FarmInvitationSettings({ apiFetch, available }) {
@@ -8,17 +9,29 @@ export default function FarmInvitationSettings({ apiFetch, available }) {
   const [busy, setBusy] = useState(false);
   const active = useRef(true);
   const lock = useRef(false);
-  useEffect(() => () => { active.current = false; }, []);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  useEffect(() => { if (!available) setCode(''); }, [available]);
   async function load(rotate = false) {
-    if (lock.current) return;
+    if (lock.current || !available) return;
     if (rotate && !window.confirm('Replace the farm invitation code? The old code will stop working immediately. Existing members keep their access.')) return;
     lock.current = true; setBusy(true); setMessage('');
     try {
-      const response = await apiFetch(`/api/users/invitation${rotate ? '/rotate' : ''}`, { method: rotate ? 'POST' : 'GET' });
+      const response = await apiFetch(`/api/users/invitation${rotate ? '/rotate' : ''}`, { method: rotate ? 'POST' : 'GET', timeoutMs: 20000 });
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       if (!/^[A-Z2-9]{4}(?:-[A-Z2-9]{4}){4}$/.test(data.code || '')) throw new Error('Invalid response');
       if (active.current) setCode(data.code);
+    } catch (error) { if (active.current) { setCode(''); setMessage(cleanMessage(error)); } }
+    finally { lock.current = false; if (active.current) setBusy(false); }
+  }
+  async function revoke() {
+    if (lock.current || !available || !window.confirm('Revoke the farm invitation code? Pending joins will stop working. Existing members keep their farm access.')) return;
+    lock.current = true; setBusy(true); setMessage('');
+    try {
+      const response = await apiFetch('/api/users/invitation/revoke', { method: 'POST', timeoutMs: 20000 });
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      if ((await readJsonWithTimeout(response))?.revoked !== true) throw new Error('Unconfirmed revocation');
+      if (active.current) { setCode(''); setMessage('Invitation revoked. Existing members keep their access.'); }
     } catch (error) { if (active.current) { setCode(''); setMessage(cleanMessage(error)); } }
     finally { lock.current = false; if (active.current) setBusy(false); }
   }
@@ -31,7 +44,8 @@ export default function FarmInvitationSettings({ apiFetch, available }) {
       {code && <><button type="button" disabled={busy} onClick={async () => {
         try { await navigator.clipboard.writeText(code); setMessage('Code copied.'); }
         catch { setMessage('Select the code above to copy it.'); }
-      }}>Copy Code</button><button type="button" disabled={busy} onClick={() => load(true)}>Replace Code</button></>}
+      }}>Copy Code</button><button type="button" disabled={busy} onClick={() => load(true)}>Replace Code</button>
+      <button type="button" disabled={busy} onClick={revoke}>Revoke Code</button></>}
     </div>}
     {message && <p role="status">{message}</p>}
   </section>;

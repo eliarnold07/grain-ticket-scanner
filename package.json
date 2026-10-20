@@ -21,6 +21,7 @@
     "check:grain-concurrency": "node scripts/check-grain-concurrency.mjs",
     "check:grain-staging": "node scripts/check-grain-staging.mjs",
     "check:invitation-staging": "node scripts/check-invitation-staging.mjs",
+    "check:invitation-release": "node scripts/check-invitation-release.mjs",
     "check:release-compatibility": "node scripts/check-release-compatibility.mjs",
     "check:release-staging": "node scripts/check-release-staging.mjs",
     "cap:sync": "npm run build:mobile && cap sync",

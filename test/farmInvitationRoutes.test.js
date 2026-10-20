@@ -16,7 +16,7 @@ test('invitation HTTP boundary is narrow, fail-closed, and never trusts client f
   app.use('/api', requireSupabaseAuth);
   app.get('/api/private', (_req, res) => res.json({ mustNotLeak: true }));
   registerFarmInvitationRoutes(app, {
-    rpc: async (name, args) => { calls.push({ name, args }); return name === 'prepare_farm_join_signup' ? { ready: true } : name === 'preview_farm_invite' ? { farm_name: 'Fictional Farm', join_token: token } : { role: 'employee' }; },
+    rpc: async (name, args) => { calls.push({ name, args }); return name === 'binflow_farm_invitation_capability' ? {version:1,code_onboarding:true,revoke:true} : name === 'prepare_farm_join_signup' ? { ready: true } : name === 'preview_farm_invite' ? { farm_name: 'Fictional Farm', join_token: token } : { role: 'employee' }; },
     authenticate: async (authorization) => {
       if (authorization !== 'Bearer valid-test-token') { const error = new Error('Unauthorized'); error.status = 401; throw error; }
       return { id: userId };

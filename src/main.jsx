@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
-import { Capacitor } from '@capacitor/core';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import binFlowMark from './assets/binflow-mark.png';
@@ -9,17 +7,18 @@ import SettingsHome from './SettingsHome.jsx';
 import SavedNamesSettings from './SavedNamesSettings.jsx';
 import FarmInvitationSettings from './FarmInvitationSettings.jsx';
 import JoinFarm from './JoinFarm.jsx';
-import { fetchWithTimeout } from './network.js';
+import TicketPhotoCapture from './TicketPhotoCapture.jsx';
+import useScannerData from './useScannerData.js';
+import { fetchWithTimeout, readJsonWithTimeout, withDeadline } from './network.js';
 import { missingTicketFields, ticketBushels as parseTicketBushels } from './ticketReview.js';
 import { pendingTicketRequest, completeTicketRequest, confirmedTicketReceipt, requireAtomicTicketWrites, postTicketForActor } from './ticketRequest.js';
 import { canOpenView, SETTINGS_SCREENS } from './settingsNavigation.js';
-import { cleanMessage, readErrorResponse } from './apiErrors.js';
+import { cleanMessage, readErrorResponse, isInvalidSessionError } from './apiErrors.js';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
 const MAX_IMAGE_DIMENSION = 1800;
 const JPEG_QUALITY = 0.82;
-const isNativeApp = Capacitor.isNativePlatform();
 
 const fieldLabels = {
   date: 'Date',
@@ -268,9 +267,9 @@ function App() {
   const [invitationsAvailable, setInvitationsAvailable] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_BASE}/api/app-capabilities`, { signal: controller.signal })
-      .then(response => response.ok ? response.json() : null)
-      .then(data => setInvitationsAvailable(data?.farm_invitations === true)).catch(() => {});
+    fetchWithTimeout(`${API_BASE}/api/app-capabilities`, { signal: controller.signal }, 20000)
+      .then(response => response.ok ? readJsonWithTimeout(response) : null)
+      .then(data => { if (!controller.signal.aborted) setInvitationsAvailable(data?.farm_invitations === true); }).catch(() => {});
     return () => controller.abort();
   }, []);
   const [activeView, setActiveView] = useState('dashboard');
@@ -284,12 +283,9 @@ function App() {
   });
   const [contractOverage, setContractOverage] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
-  const [dropdowns, setDropdowns] = useState({
-    bins: [],
-    haulers: [],
-    destinations: [],
-    missing_tabs: []
-  });
+  const { dropdowns, scannerContracts, isLoadingDropdowns, dropdownError,
+    isLoadingScannerContracts, scannerContractsError, loadDropdowns,
+    loadScannerContracts, resetScannerData } = useScannerData(apiFetch, session?.user?.id);
   const [otherValues, setOtherValues] = useState({
     delivered_to: '',
     hauled_by: '',
@@ -307,7 +303,6 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const ticketSubmittingRef = useRef(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
-  const [isLoadingDropdowns, setIsLoadingDropdowns] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [updatingPaymentIds, setUpdatingPaymentIds] = useState([]);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -320,6 +315,7 @@ function App() {
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
   const [userStatus, setUserStatus] = useState('');
+  const [changingMember, setChangingMember] = useState('');
   const [contractForm, setContractForm] = useState(blankContractForm);
   const [editingContractId, setEditingContractId] = useState('');
   const [editingTicket, setEditingTicket] = useState(null);
@@ -362,13 +358,13 @@ function App() {
   const outstandingContracts = useMemo(() => {
     const ticketCrop = String(ticket.crop || '').trim().toLowerCase();
 
-    return contracts.filter((contract) => {
+    return scannerContracts.filter((contract) => {
       const status = String(contract.status || '').toLowerCase();
       const commodity = String(contract.commodity || '').trim().toLowerCase();
       const isOpen = Number(contract.remaining_bushels) > 0 && !['closed', 'cancelled'].includes(status);
       return isOpen && (!ticketCrop || !commodity || commodity === ticketCrop);
     });
-  }, [contracts, ticket.crop]);
+  }, [scannerContracts, ticket.crop]);
   const [dashboard, setDashboard] = useState(emptyDashboard);
 
   const isAuthenticated = Boolean(session?.access_token);
@@ -398,7 +394,7 @@ function App() {
         }
       } catch (error) {
         // A transport outage is not evidence that the refresh token is invalid.
-        if (error.status >= 400 && error.status < 500 && error.status !== 429) storeSession(null);
+        if (isInvalidSessionError(error)) storeSession(null);
         if (!cancelled) {
           sessionRef.current = null;
           setSession(null);
@@ -448,8 +444,8 @@ function App() {
     }
 
     initializeFarmData();
-    const intervalId = window.setInterval(() => loadDropdowns({ silent: true }), 60000);
-    const handleFocus = () => loadDropdowns({ silent: true });
+    const handleFocus = () => { loadDropdowns(); loadScannerContracts(); };
+    const intervalId = window.setInterval(handleFocus, 60000);
 
     window.addEventListener('focus', handleFocus);
 
@@ -461,18 +457,19 @@ function App() {
   }, [isAuthReady, isAuthenticated]);
 
   async function apiFetch(path, options = {}, retry = true) {
+    const { timeoutMs = 90000, ...requestOptions } = options;
     const activeSession = sessionRef.current;
     if (!activeSession?.access_token || terminalAuthFailureRef.current) {
       throw new Error('Please log in to continue.');
     }
 
     const response = await fetchWithTimeout(`${API_BASE}${path}`, {
-      ...options,
+      ...requestOptions,
       headers: {
-        ...(options.headers || {}),
+        ...(requestOptions.headers || {}),
         Authorization: `Bearer ${activeSession.access_token}`
       }
-    });
+    }, timeoutMs);
 
     if (terminalAuthFailureRef.current || sessionRef.current?.user?.id !== activeSession.user?.id) {
       const error = new Error('Your account session changed. Please sign in again.');
@@ -481,6 +478,7 @@ function App() {
     }
 
     if (response.status !== 401 || !retry || !activeSession.refresh_token) {
+      if (response.status === 401) endInvalidSession();
       return response;
     }
 
@@ -505,12 +503,12 @@ function App() {
 
       const nextSession = await refreshPromiseRef.current;
       const retryResponse = await fetchWithTimeout(`${API_BASE}${path}`, {
-        ...options,
+        ...requestOptions,
         headers: {
-          ...(options.headers || {}),
+          ...(requestOptions.headers || {}),
           Authorization: `Bearer ${nextSession.access_token}`
         }
-      });
+      }, timeoutMs);
 
       if (terminalAuthFailureRef.current || sessionRef.current?.user?.id !== nextSession.user?.id) {
         const error = new Error('Your account session changed. Please sign in again.');
@@ -524,7 +522,7 @@ function App() {
 
       return retryResponse;
     } catch (error) {
-      if (error.code !== 'AUTH_CONTEXT_CHANGED') endInvalidSession();
+      if (isInvalidSessionError(error)) endInvalidSession();
       throw error;
     }
   }
@@ -552,9 +550,9 @@ function App() {
 
   async function loadFarmSession() {
     try {
-      const response = await apiFetch('/api/session');
+      const response = await apiFetch('/api/session', { timeoutMs: 20000 });
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       setFarm(data.farm);
       setAccount(data.account);
       return data;
@@ -608,7 +606,7 @@ function App() {
     setAuthForm(current => ({ ...current, password: '' }));
     setLocations([]);
     setFarmUsers([]); setTicketLogs([]); setBins([]); setContracts([]); setDrivers([]);
-    setDropdowns({ bins: [], haulers: [], destinations: [], missing_tabs: [] });
+    resetScannerData();
     setDashboard(emptyDashboard());
     resetForNextTicket();
   }
@@ -630,7 +628,7 @@ function App() {
     setBins([]);
     setContracts([]);
     setDrivers([]);
-    setDropdowns({ bins: [], haulers: [], destinations: [], missing_tabs: [] });
+    resetScannerData();
     setDashboard(emptyDashboard());
     resetForNextTicket();
     setActiveView('dashboard');
@@ -641,6 +639,12 @@ function App() {
       setActiveView('scanner');
     }
   }, [activeView, isEmployee]);
+
+  useEffect(() => {
+    if (isAuthReady && isAuthenticated && account?.user_id && activeView === 'scanner') {
+      loadDropdowns(); loadScannerContracts();
+    }
+  }, [activeView, isAuthReady, isAuthenticated, account?.user_id, loadDropdowns, loadScannerContracts]);
 
   useEffect(() => {
     if (isAuthReady && isAuthenticated && isAdmin && activeView === 'dashboard') {
@@ -659,41 +663,6 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [activeView, historyFilters, isAdmin, isAuthReady, isAuthenticated, showArchivedTickets]);
-
-  async function loadDropdowns(options = {}) {
-    if (!options.silent) {
-      setIsLoadingDropdowns(true);
-    }
-
-    try {
-      const response = await apiFetch('/api/dropdowns');
-
-      if (!response.ok) {
-        throw new Error(await readErrorResponse(response));
-      }
-
-      const data = await response.json();
-
-      setDropdowns({
-        bins: uniqueOptions(data.bins),
-        haulers: uniqueOptions(data.haulers),
-        destinations: uniqueOptions(data.destinations),
-        missing_tabs: data.missing_tabs || []
-      });
-
-      if (data.missing_tabs?.length) {
-        setStatus(`Dropdowns loaded, but missing sheet tabs: ${data.missing_tabs.join(', ')}.`);
-      }
-    } catch (error) {
-      if (!options.silent) {
-        reportError(error);
-      }
-    } finally {
-      if (!options.silent) {
-        setIsLoadingDropdowns(false);
-      }
-    }
-  }
 
   async function loadDashboard(options = {}) {
     if (!options.silent) {
@@ -770,17 +739,6 @@ function App() {
     }
   }
 
-  async function loadScannerContracts(options = {}) {
-    try {
-      const response = await apiFetch('/api/scanner-contracts');
-      if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
-      setContracts(data.contracts || []);
-    } catch (error) {
-      if (!options.silent) reportError(error);
-    }
-  }
-
   async function loadFarmUsers(options = {}) {
     if (!options.silent) setIsLoadingUsers(true);
 
@@ -824,23 +782,24 @@ function App() {
     }
   }
 
-  async function promoteUser(user) {
-    if (user.role === 'admin') return;
-    if (!window.confirm(`Make ${user.display_name || user.email} an Administrator? They will be able to manage this farm and its members.`)) return;
-
-    setUserStatus(`Promoting ${user.display_name || user.email} to administrator...`);
+  async function changeUserRole(user, nextRole) {
+    if (changingMember || user.role === nextRole) return;
+    if (!window.confirm(`Make ${user.display_name || user.email} ${nextRole === 'admin' ? 'an Administrator with farm management access' : 'an Employee with ticket scanning access'}?`)) return;
+    setChangingMember(user.user_id);
+    setUserStatus('Updating farm access...');
     try {
       const response = await apiFetch(`/api/users/${user.user_id}/role`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'admin' })
+        body: JSON.stringify({ role: nextRole })
       });
       if (!response.ok) throw new Error(await readErrorResponse(response));
       await loadFarmUsers({ silent: true });
-      setUserStatus(`${user.display_name || user.email} is now an administrator.`);
+      if (user.user_id === account.user_id) await loadFarmSession();
+      setUserStatus('Farm access updated.');
     } catch (error) {
       setUserStatus(cleanMessage(error));
-    }
+    } finally { setChangingMember(''); }
   }
 
   async function repairEmployee() {
@@ -888,7 +847,7 @@ function App() {
     setContracts([]);
     setDrivers([]);
     setLocations([]);
-    setDropdowns({ bins: [], haulers: [], destinations: [], missing_tabs: [] });
+    resetScannerData();
     setDashboard(emptyDashboard());
     resetForNextTicket();
     setActiveView('dashboard');
@@ -1504,41 +1463,6 @@ function App() {
     }
   }
 
-  function handleFileChange(event) {
-    setTicketPhoto(event.target.files?.[0] || null);
-    event.target.value = '';
-  }
-
-  async function chooseNativeTicketPhoto(source) {
-    if (!isNativeApp) return;
-
-    try {
-      const photo = await Camera.getPhoto({
-        quality: 85,
-        resultType: CameraResultType.Uri,
-        source,
-        allowEditing: false,
-        saveToGallery: false
-      });
-      const file = await nativePhotoToFile(photo);
-      setTicketPhoto(file);
-    } catch (error) {
-      const message = String(error?.message || '').toLowerCase();
-
-      if (message.includes('cancel')) {
-        setStatus('Photo selection canceled. Choose or take a ticket photo to begin.');
-        return;
-      }
-
-      if (message.includes('denied') || message.includes('permission')) {
-        setStatus('BinFlow does not have permission to use that photo source. Check iPhone Settings and try again.');
-        return;
-      }
-
-      reportError(error);
-    }
-  }
-
   function updateField(field, value) {
     setTicket((current) => ({
       ...current,
@@ -1614,7 +1538,7 @@ function App() {
     const formData = new FormData();
 
     try {
-      const uploadFile = await convertImageToJpeg(selectedFile);
+      const uploadFile = await withDeadline(() => convertImageToJpeg(selectedFile), 20000);
       formData.append('ticketImage', uploadFile);
       setStatus('Reading ticket image...');
 
@@ -1627,7 +1551,7 @@ function App() {
         throw new Error(await readErrorResponse(response));
       }
 
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
 
       setTicket((current) => ({
         ...emptyTicket(),
@@ -1683,7 +1607,7 @@ function App() {
     }
 
     const ticketBushels = parseTicketBushels(ticket.bushels);
-    const selectedContract = contracts.find((contract) => contract.id === scannerAssignment.contractId);
+    const selectedContract = scannerContracts.find((contract) => contract.id === scannerAssignment.contractId);
     let assignment = {
       assignment_status: 'Spot',
       assignments: [{
@@ -1768,7 +1692,7 @@ function App() {
       let response = await sendTicket(allowBinOverdraw);
 
       if (response.status === 409 && !allowBinOverdraw) {
-        const errorData = await response.clone().json().catch(() => ({}));
+        const errorData = await readJsonWithTimeout(response.clone()).catch(() => ({}));
 
         if (errorData.code === 'BIN_INVENTORY_OVERDRAW') {
           allowBinOverdraw = window.confirm('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
@@ -1786,7 +1710,7 @@ function App() {
         throw new Error(await readErrorResponse(response));
       }
 
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       confirmedTicketReceipt(data);
       completeTicketRequest(localStorage, actor, requestId);
       if (sessionRef.current?.user?.id !== actor) return;
@@ -1815,13 +1739,12 @@ function App() {
       setIsSuccess(true);
       setStatus('Ticket submitted successfully');
       loadDropdowns({ silent: true });
+      loadScannerContracts({ silent: true });
       if (isAdmin) {
         loadTicketHistory({ silent: true });
         loadContracts({ silent: true });
         loadBins({ silent: true });
         loadDashboard({ silent: true });
-      } else {
-        loadScannerContracts({ silent: true });
       }
     } catch (error) {
       reportError(error);
@@ -1839,9 +1762,9 @@ function App() {
     setIsSubmitting(true);
     try {
       const requestId = pendingTicketRequest(localStorage, actor);
-      const response = await apiFetch(`/api/ticket-submissions/${requestId}`);
+      const response = await apiFetch(`/api/ticket-submissions/${requestId}`, { timeoutMs: 20000 });
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       if (sessionRef.current?.user?.id !== actor) return;
       if (!['committed', 'deleted'].includes(data.status) || !data.ticket?.id) {
         setStatus('No saved submission was found for this attempt. Retry the original ticket; do not start a second copy.');
@@ -1874,7 +1797,7 @@ function App() {
       return;
     }
 
-    const overageContract = contracts.find((contract) => contract.id === contractOverage.contractIdForOverage);
+    const overageContract = scannerContracts.find((contract) => contract.id === contractOverage.contractIdForOverage);
     if (
       contractOverage.destination === 'Contract'
       && overageContract
@@ -1955,7 +1878,7 @@ function App() {
         <section className="auth-card">
           <div className="auth-tabs">
             <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Log In</button>
-            <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Create Farm Account</button>
+            <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Create Farm</button>
             {invitationsAvailable && <button type="button" className={authMode === 'join' ? 'active' : ''} onClick={() => setAuthMode('join')}>Join Farm</button>}
           </div>
           {authMode === 'join' ? <JoinFarm apiBase={API_BASE} onLogin={message => { setAuthMode('login'); setAuthStatus(message); }} onSession={data => {
@@ -2876,6 +2799,7 @@ function App() {
 
           <FarmInvitationSettings apiFetch={apiFetch} available={invitationsAvailable} />
           <div className="user-management-grid">
+            {!invitationsAvailable && <details className="legacy-user-access"><summary>Add a user with a temporary password</summary>
             <form className="employee-form" onSubmit={createFarmUser}>
               <div className="form-heading compact-heading">
                 <h3>Add Farm User</h3>
@@ -2921,7 +2845,7 @@ function App() {
               <button className="primary-button" type="submit" disabled={isCreatingEmployee}>
                 {isCreatingEmployee ? 'Creating User...' : `Create ${employeeForm.role === 'admin' ? 'Administrator' : 'Employee'} Login`}
               </button>
-            </form>
+            </form></details>}
 
             <div className="farm-user-list">
               <div className="section-title-row">
@@ -2944,11 +2868,11 @@ function App() {
                     </div>
                     <div className="farm-user-role-actions">
                       <span className={`role-badge ${user.role}`}>{user.role}</span>
-                      {user.role === 'employee' && (
-                        <button type="button" onClick={() => promoteUser(user)}>
-                          Promote to Admin
-                        </button>
-                      )}
+                      <button type="button" disabled={Boolean(changingMember) || (user.role === 'admin' && farmUsers.filter(member => member.role === 'admin').length <= 1)}
+                        title={user.role === 'admin' && farmUsers.filter(member => member.role === 'admin').length <= 1 ? 'The farm must keep at least one Administrator' : undefined}
+                        onClick={() => changeUserRole(user, user.role === 'admin' ? 'employee' : 'admin')}>
+                        {changingMember === user.user_id ? 'Updating...' : user.role === 'employee' ? 'Promote to Admin' : 'Make Employee'}
+                      </button>
                     </div>
                   </article>
                 ))
@@ -2972,60 +2896,25 @@ function App() {
       )}
 
       <section className="capture-panel">
-        <div className="upload-target" aria-live="polite">
-          {previewUrl ? (
-            <img src={previewUrl} alt="Selected grain ticket preview" />
-          ) : (
-            <span>Tap to take or upload a ticket photo</span>
-          )}
-        </div>
-
-        {isNativeApp ? (
-          <div className="capture-actions" aria-label="Ticket photo options">
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => chooseNativeTicketPhoto(CameraSource.Camera)}
-              disabled={isExtracting || isSubmitting}
-            >
-              Take Photo
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => chooseNativeTicketPhoto(CameraSource.Photos)}
-              disabled={isExtracting || isSubmitting}
-            >
-              Choose Photo
-            </button>
-          </div>
-        ) : (
-          <label className="file-picker-button">
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileChange}
-              disabled={isExtracting || isSubmitting}
-            />
-            Choose or Take Photo
-          </label>
-        )}
+        <TicketPhotoCapture key={account.user_id} previewUrl={previewUrl} onPhoto={setTicketPhoto} disabled={isExtracting || isSubmitting} />
 
         {selectedFile && <div className="ocr-consent">
-          <label className="confirmation-check"><input type="checkbox" checked={ocrConsent} disabled={isExtracting || isSubmitting} onChange={event => setOcrConsent(event.target.checked)} />I agree to send this ticket photo to OpenAI through BinFlow to extract ticket details.</label>
-          <p>The photo may include names and farm information printed on the ticket. You can enter details manually instead. <a href="https://getbinflow.com/privacy/" target="_blank" rel="noreferrer">Privacy Policy</a></p>
+          <label className="confirmation-check"><input type="checkbox" checked={ocrConsent} disabled={isExtracting || isSubmitting} onChange={event => setOcrConsent(event.target.checked)} />Allow this photo to be sent to OpenAI for ticket reading.</label>
+          <p>Photos may contain names and farm information. Manual entry is available. <a href="https://getbinflow.com/privacy/" target="_blank" rel="noreferrer">Privacy Policy</a></p>
         </div>}
         <button className="primary-button" onClick={extractTicket} disabled={isExtracting || isSubmitting || !selectedFile || !ocrConsent}>
           {isExtracting ? 'Scanning Ticket...' : 'Extract Ticket Data'}
         </button>
 
-        <p className="status-text">{status}</p>
+        <p className="status-text" role="status">{status}</p>
         <button type="button" className="text-button" onClick={checkPreviousSubmission} disabled={isSubmitting || isExtracting}>Check Previous Submission</button>
 
         {isLoadingDropdowns && (
-          <div className="notice">Loading shared bins, locations, and drivers...</div>
+          <p className="scanner-data-status" role="status">Loading bins, locations, and drivers...</p>
         )}
+        {dropdownError && <div className="notice" role="alert"><p>Could not refresh farm choices. {dropdownError}</p><button type="button" onClick={loadDropdowns}>Retry Farm Choices</button></div>}
+        {isLoadingScannerContracts && <p className="scanner-data-status" role="status">Loading contracts...</p>}
+        {scannerContractsError && <div className="notice" role="alert"><p>Could not refresh contracts. {scannerContractsError}</p><button type="button" onClick={loadScannerContracts}>Retry Contracts</button></div>}
 
         {dropdowns.missing_tabs.length > 0 && (
           <div className="notice warning">
@@ -3227,26 +3116,6 @@ function App() {
       )}
     </main>
   );
-}
-
-async function nativePhotoToFile(photo) {
-  if (!photo?.webPath) {
-    throw new Error('Could not read the selected photo.');
-  }
-
-  const response = await fetch(photo.webPath);
-
-  if (!response.ok) {
-    throw new Error('Could not prepare this photo for upload.');
-  }
-
-  const blob = await response.blob();
-  const extension = photo.format || blob.type.split('/')[1] || 'jpg';
-
-  return new File([blob], `grain-ticket.${extension}`, {
-    type: blob.type || `image/${extension}`,
-    lastModified: Date.now()
-  });
 }
 
 createRoot(document.getElementById('root')).render(<App />);

@@ -1,21 +1,27 @@
 import { createHmac } from 'node:crypto';
 import { generateFarmCode, hashFarmCode, encryptFarmCode, decryptFarmCode, validateFarmInvitationKey } from './farmInvitation.js';
 import { invitationClientIp } from './invitationIdentity.js';
+import { writesPaused } from './releaseControls.js';
 
 export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, requestAccount }) {
-  app.get('/api/app-capabilities', (_req, res) => {
+  app.get('/api/app-capabilities', async (_req, res) => {
     let available = false;
-    try { ready(); available = true; } catch { /* Disabled until separately approved configuration. */ }
+    try { await ready(); available = true; } catch { /* Disabled until schema and separately approved configuration are ready. */ }
     res.set('Cache-Control', 'no-store').json({ farm_invitations: available });
   });
-  function ready() {
-    if (process.env.FARM_INVITATIONS_ENABLED !== 'true' || !process.env.FARM_INVITE_ENCRYPTION_KEY) {
+  async function ready() {
+    if (writesPaused() || process.env.FARM_INVITATIONS_ENABLED !== 'true' || !process.env.FARM_INVITE_ENCRYPTION_KEY) {
       const error = new Error('Farm invitation joining is not available yet. Contact your farm Admin.');
       error.status = 503;
       throw error;
     }
     try { validateFarmInvitationKey(process.env.FARM_INVITE_ENCRYPTION_KEY); }
     catch { const error = new Error('Farm invitation joining is temporarily unavailable.'); error.status = 503; throw error; }
+    let capability;
+    try { capability = await rpc('binflow_farm_invitation_capability', {}); } catch { /* Fail closed on absent/unavailable schema. */ }
+    if (capability?.version !== 1 || capability.code_onboarding !== true || capability.revoke !== true) {
+      const error = new Error('Farm invitation joining is temporarily unavailable.'); error.status = 503; throw error;
+    }
   }
   function uuid(value) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value || '')) throw new Error('Invalid join confirmation. Enter the code again.');
@@ -23,15 +29,20 @@ export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, r
   }
   function route(action) {
     return async (req, res) => {
+      res.set('Cache-Control', 'no-store');
       try {
-        ready();
+        await ready();
         const data = await action(req);
-        if (data?.error) return res.status(data.status || 400).json({ error: data.error });
+        if (data?.error) {
+          const code = data.status === 429 ? 'INVITATION_RATE_LIMITED'
+            : /expired|code again/i.test(data.error) ? 'INVITATION_EXPIRED' : 'INVITATION_INVALID';
+          return res.status(data.status === 429 ? 429 : 400).json({ code });
+        }
         res.json(data);
       } catch (error) {
         // Do not log codes, join tokens, passwords or upstream Auth response details.
-        const message = error.status === 503 ? error.message : error.status === 401 ? 'Please log in to join this farm.' : 'Could not complete the farm invitation request. Check the code and try again.';
-        res.status(error.status || 400).json({ error: message });
+        const message = error.status === 503 ? 'Farm invitation joining is temporarily unavailable.' : error.status === 401 ? 'Please log in to join this farm.' : 'Could not complete the farm invitation request. Check the code and try again.';
+        res.status([400,401,403,429,503].includes(error.status) ? error.status : 400).json({ error: message });
       }
     };
   }
@@ -75,4 +86,9 @@ export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, r
   // These paths run through the normal membership/Admin middleware.
   app.get('/api/users/invitation', manage(false));
   app.post('/api/users/invitation/rotate', manage(true));
+  app.post('/api/users/invitation/revoke', route(async (req) => {
+    const user = requestAccount(req);
+    if (user?.role !== 'admin') { const error = new Error('Admin access required'); error.status = 403; throw error; }
+    return rpc('revoke_farm_invite', { p_actor: user.user_id });
+  }));
 }
