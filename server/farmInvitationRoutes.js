@@ -4,18 +4,20 @@ import { invitationClientIp } from './invitationIdentity.js';
 import { writesPaused } from './releaseControls.js';
 
 export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, requestAccount }) {
-  app.get('/api/app-capabilities', async (_req, res) => {
+  app.get('/api/app-capabilities', async (req, res) => {
     let available = false;
-    try { await ready(); available = true; } catch { /* Disabled until schema and separately approved configuration are ready. */ }
+    try { await ready(req); available = true; } catch { /* Disabled until schema and actual ingress are ready. */ }
     res.set('Cache-Control', 'no-store').json({ farm_invitations: available });
   });
-  async function ready() {
+  async function ready(req) {
     if (writesPaused() || process.env.FARM_INVITATIONS_ENABLED !== 'true' || !process.env.FARM_INVITE_ENCRYPTION_KEY) {
       const error = new Error('Farm invitation joining is not available yet. Contact your farm Admin.');
       error.status = 503;
       throw error;
     }
     try { validateFarmInvitationKey(process.env.FARM_INVITE_ENCRYPTION_KEY); }
+    catch { const error = new Error('Farm invitation joining is temporarily unavailable.'); error.status = 503; throw error; }
+    try { invitationClientIp(req); }
     catch { const error = new Error('Farm invitation joining is temporarily unavailable.'); error.status = 503; throw error; }
     let capability;
     try { capability = await rpc('binflow_farm_invitation_capability', {}); } catch { /* Fail closed on absent/unavailable schema. */ }
@@ -31,7 +33,7 @@ export function registerFarmInvitationRoutes(app, { rpc, authenticate, signup, r
     return async (req, res) => {
       res.set('Cache-Control', 'no-store');
       try {
-        await ready();
+        await ready(req);
         const data = await action(req);
         if (data?.error) {
           const code = data.status === 429 ? 'INVITATION_RATE_LIMITED'

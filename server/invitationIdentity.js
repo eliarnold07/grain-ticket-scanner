@@ -1,5 +1,36 @@
 import { BlockList, isIP } from 'node:net';
 
+const internalAddresses = new BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
+  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['224.0.0.0', 3]
+]) internalAddresses.addSubnet(address, prefix, 'ipv4');
+for (const [address, prefix] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]]) {
+  internalAddresses.addSubnet(address, prefix, 'ipv6');
+}
+
+function verifiedClient(address) {
+  if (internalAddresses.check(address, isIP(address) === 4 ? 'ipv4' : 'ipv6')) {
+    throw new Error('The forwarding chain stopped at an unverified internal proxy.');
+  }
+  return address;
+}
+
+function renderEdgeClient(req, env, peer) {
+  const service = env.FARM_INVITES_RENDER_SERVICE_ID;
+  if (env.RENDER !== 'true' || !/^srv-[a-z0-9]+$/.test(service || '') || service !== env.RENDER_SERVICE_ID) {
+    throw new Error('Invitation identity is not bound to this Render service.');
+  }
+  if (peer !== '127.0.0.1' && peer !== '::1') throw new Error('Direct/private ingress cannot supply edge identity.');
+  // Render's public ingress is Cloudflare-backed. Enable this mode only after
+  // deployed spoof/alternate-path tests; these headers alone are not signatures.
+  if (req.headers['x-forwarded-proto'] !== 'https' || typeof req.headers['cf-ray'] !== 'string'
+    || !/^[a-f0-9]{16,32}-[a-z0-9]{3}$/i.test(req.headers['cf-ray'])) {
+    throw new Error('Expected Render edge metadata is unavailable.');
+  }
+  return verifiedClient(canonicalIp(req.headers['cf-connecting-ip']));
+}
+
 export function canonicalIp(value) {
   if (typeof value !== 'string' || value.includes('%') || !isIP(value)) throw new Error('Invalid network identity.');
   if (isIP(value) === 4) return value;
@@ -17,7 +48,11 @@ export function invitationClientIp(req, env = process.env) {
   if (Number(env.FARM_INVITES_PROXY_HOPS || 0) !== 0) throw new Error('Numeric proxy-hop trust is no longer supported.');
   const mode = env.FARM_INVITES_PROXY_MODE || 'direct';
   const peer = canonicalIp(req.socket.remoteAddress);
-  if (mode === 'direct') return peer;
+  if (mode === 'render-edge') return renderEdgeClient(req, env, peer);
+  if (mode === 'direct') {
+    if (env.RENDER === 'true') throw new Error('Render invitation ingress requires an explicitly verified proxy mode.');
+    return peer;
+  }
   if (mode !== 'trusted') throw new Error('Invalid invitation proxy mode.');
   const list = new BlockList();
   const networks = String(env.FARM_INVITES_TRUSTED_PROXIES || '').split(',').map((entry) => entry.trim()).filter(Boolean);
@@ -42,9 +77,9 @@ export function invitationClientIp(req, env = process.env) {
   if (chain.length > 10) throw new Error('Forwarding chain is too long.');
   let current = peer;
   for (let index = chain.length - 1; index >= 0; index--) {
-    if (!trusted(current)) return current;
+    if (!trusted(current)) return verifiedClient(current);
     current = chain[index];
   }
   if (trusted(current)) throw new Error('No untrusted client identity in the forwarding chain.');
-  return current;
+  return verifiedClient(current);
 }

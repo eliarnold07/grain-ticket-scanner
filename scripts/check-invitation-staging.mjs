@@ -41,8 +41,8 @@ try {
     registerFarmInvitationRoutes(app,{rpc:store.farmFeatureRpc,authenticate:store.authenticateJoinRequest,signup:store.signupInvitedUser,requestAccount:store.currentAccount});
     const server=app.listen(0,'127.0.0.1');servers.push(server);await once(server,'listening');
   }
-  const api=async(worker,path,{actor,body,forwarded='203.0.113.10',method=body?'POST':'GET'}={})=>{
-    const response=await fetch(`http://127.0.0.1:${servers[worker].address().port}/api${path}`,{method,signal:AbortSignal.timeout(30000),headers:{'Content-Type':'application/json',...(actor?{Authorization:`Bearer ${actor.token}`} : {}),...(forwarded===null?{}:{'X-Forwarded-For':forwarded})},body:body===undefined?undefined:JSON.stringify(body)});
+  const api=async(worker,path,{actor,body,forwarded='203.0.113.10',edgeClient,method=body?'POST':'GET'}={})=>{
+    const response=await fetch(`http://127.0.0.1:${servers[worker].address().port}/api${path}`,{method,signal:AbortSignal.timeout(30000),headers:{'Content-Type':'application/json',...(actor?{Authorization:`Bearer ${actor.token}`} : {}),...(forwarded===null?{}:{'X-Forwarded-For':forwarded}),...(edgeClient===undefined?{}:{'CF-Connecting-IP':edgeClient,'CF-Ray':'0123456789abcdef-ORD','X-Forwarded-Proto':'https'})},body:body===undefined?undefined:JSON.stringify(body)});
     return {status:response.status,data:await response.json()};
   };
   const preview=(worker,code,forwarded)=>api(worker,'/farm-invites/preview',{body:{code},forwarded});
@@ -97,6 +97,21 @@ try {
   await wait();await observer.query('select pg_sleep(1.1)');await first.query('commit');
   assert.match((await join).error?.message||'',/Invitation expired/);
   assert.equal((await observer.query('select role from public.farm_accounts where user_id=$1',[employee.id])).rows[0].role,'employee');
+  phase='Render edge simulation with real persistent PostgreSQL limiter';
+  Object.assign(process.env,{RENDER:'true',RENDER_SERVICE_ID:'srv-fictionalstage',FARM_INVITES_RENDER_SERVICE_ID:'srv-fictionalstage',FARM_INVITES_PROXY_MODE:'render-edge'});
+  const edgePreview=(worker,code,edgeClient,forwarded)=>api(worker,'/farm-invites/preview',{body:{code},edgeClient,forwarded});
+  assert.deepEqual((await api(0,'/app-capabilities')).data,{farm_invitations:false},'Missing edge headers cannot advertise readiness');
+  assert.equal((await edgePreview(0,'invalid','203.0.113.30','198.51.100.1, 10.20.1.2')).status,400);
+  assert.equal((await edgePreview(1,'invalid','203.0.113.30','198.51.100.2, 10.40.2.3')).status,400);
+  const edgeBlocked=await Promise.all(Array.from({length:6},(_,n)=>edgePreview(n%2,'invalid','203.0.113.30',`198.51.100.${n+3}, 10.50.${n}.2`)));
+  assert.ok(edgeBlocked.every(result=>result.status===429),'Forged prefixes and rotating internal hops cannot evade the shared limiter');
+  assert.equal((await edgePreview(1,rotated.data.code,'203.0.113.31','198.51.100.99, 10.99.1.2')).status,200,'A distinct simulated edge client has a separate bucket');
+  for(const edgeClient of ['10.20.1.2','203.0.113.31, 198.51.100.99']) {
+    assert.equal((await edgePreview(0,rotated.data.code,edgeClient,'203.0.113.31')).status,503);
+  }
+  assert.equal((await edgePreview(0,rotated.data.code,undefined,'203.0.113.31')).status,503,'Never fall back to caller XFF');
+  process.env.FARM_INVITES_RENDER_SERVICE_ID='srv-otherstage';
+  assert.deepEqual((await api(0,'/app-capabilities',{edgeClient:'203.0.113.31'})).data,{farm_invitations:false},'Wrong service binding cannot advertise readiness');
   console.log(`PASS ${STAGING_REF}: actual Auth invitation membership, malicious role metadata ignored, second-farm refusal, rotation/revoke/token invalidation, cross-farm revoke isolation, persistent cross-worker rate limits, spoof resistance, fail-closed proxy configuration and observed lock-delayed expiry.`);
   console.log('Local proxy-chain simulation only; real hosted ingress remains unverified. Fictional fixtures remain in disposable staging.');
 } catch(error) {
