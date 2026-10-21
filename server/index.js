@@ -4,23 +4,29 @@ import cors from 'cors';
 import multer from 'multer';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
+import { accountDeletionRouter } from './accountDeletionRoutes.js';
+import { registerFarmInvitationRoutes } from './farmInvitationRoutes.js';
+import { settingsNamesRoutes } from './settingsNamesRoutes.js';
+import { requireUuid, validateApiIds } from './restQuery.js';
+import { farmPermissionGuard } from './farmPermissions.js';
+import { releaseWriteGuard, requireAtomicTicketClient } from './releaseControls.js';
 import {
-  addTicketLog,
+  submitTicketAtomically,
+  ticketRequestStatus,
+  farmFeatureRpc,
+  authenticateJoinRequest,
+  signupInvitedUser,
   createBin,
   createContract,
-  createDriver,
   createFarmUserAccount,
-  createLocation,
+  deleteCurrentAccount,
   createInventoryTransaction,
-  createTicketSaleTransaction,
   deleteBin,
   deleteContract,
-  deleteDriver,
-  deleteLocation,
   deleteInventoryTransaction,
   deleteTicketLog,
-  deleteTicketLogByInventoryTransactionId,
   getInventorySnapshot,
+  getAccountDeletionPreview,
   getTicketLogSnapshot,
   listBins,
   listContracts,
@@ -49,6 +55,10 @@ import {
   sendWeeklySummaries,
   startWeeklySummaryScheduler
 } from './weeklySummaryScheduler.js';
+import {
+  getFarmEntitlement,
+  requireFarmEntitlement
+} from './entitlementService.js';
 
 const app = express();
 const upload = multer({
@@ -68,6 +78,8 @@ const allowedOrigins = new Set([
   'https://getbinflow.com',
   'https://www.getbinflow.com',
   'https://eliarnold07.github.io',
+  'capacitor://localhost',
+  'binflow://localhost',
   'http://localhost:5173'
 ]);
 
@@ -104,30 +116,30 @@ app.use(cors({
       return;
     }
 
-    callback(new Error('This website is not allowed to access the BinFlow API.'));
+    const error = new Error('Origin not allowed.');
+    error.code = 'CORS_BLOCKED';
+    callback(error);
   }
 }));
+app.use('/api',releaseWriteGuard);
 app.use(express.json({ limit: '2mb' }));
+app.param('id', (_req, res, next, id) => {
+  try { requireUuid(id); next(); } catch { res.status(400).json({ code: 'INVALID_ID' }); }
+});
+app.use('/api', validateApiIds);
 app.use('/api', requireSupabaseAuth);
+app.use('/api', requireFarmEntitlement);
 
-const employeeRoutes = new Set([
-  'GET /session',
-  'GET /dropdowns',
-  'GET /scanner-contracts',
-  'POST /extract-ticket',
-  'POST /submit-ticket'
-]);
+app.use('/api', farmPermissionGuard(currentAccount));
 
-app.use('/api', (req, res, next) => {
-  if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
+registerFarmInvitationRoutes(app, {
+  rpc: farmFeatureRpc, authenticate: authenticateJoinRequest,
+  signup: signupInvitedUser, requestAccount: () => currentAccount()
+});
 
-  const account = currentAccount();
-  if (account?.role === 'admin') return next();
-
-  const routeKey = `${req.method} ${req.path}`;
-  if (account?.role === 'employee' && employeeRoutes.has(routeKey)) return next();
-
-  return res.status(403).json({ error: 'Admin access is required for this action.' });
+app.get('/api/ticket-submissions/:id', async (req, res) => {
+  try { res.json(await ticketRequestStatus(req.params.id)); }
+  catch { res.status(400).json({ error: 'Could not verify the previous submission.' }); }
 });
 
 function blankTicket() {
@@ -354,9 +366,21 @@ app.post('/api/weekly-summary/send', async (req, res) => {
   }
 });
 
-app.get('/api/session', (_req, res) => {
-  res.json({ farm: currentFarm(), account: currentAccount() });
+app.get('/api/session', async (_req, res) => {
+  const farm = currentFarm();
+
+  res.json({
+    farm,
+    account: currentAccount(),
+    entitlement: await getFarmEntitlement(farm?.id)
+  });
 });
+
+app.use('/api', accountDeletionRouter({
+  preview: getAccountDeletionPreview,
+  remove: deleteCurrentAccount,
+  report: (code) => console.error('Account request failed:', code)
+}));
 
 app.get('/api/dropdowns', async (_req, res) => {
   try {
@@ -492,7 +516,7 @@ app.put('/api/ticket-logs/:id', async (req, res) => {
     logError('Ticket log update failed', error);
     res.status(400).json({
       error: 'Could not update ticket log.',
-      detail: error.message
+      code: error.code
     });
   }
 });
@@ -500,10 +524,6 @@ app.put('/api/ticket-logs/:id', async (req, res) => {
 app.delete('/api/ticket-logs/:id', async (req, res) => {
   try {
     const deletedLog = await deleteTicketLog(req.params.id);
-
-    if (deletedLog.inventory_transaction_id) {
-      await deleteInventoryTransaction(deletedLog.inventory_transaction_id);
-    }
 
     res.json({
       ok: true,
@@ -648,31 +668,7 @@ app.get('/api/drivers', async (_req, res) => {
   }
 });
 
-app.post('/api/drivers', async (req, res) => {
-  try {
-    const driver = await createDriver(req.body || {});
-    res.status(201).json({ driver });
-  } catch (error) {
-    logError('Driver create failed', error);
-    res.status(400).json({
-      error: 'Could not create driver.',
-      detail: error.message
-    });
-  }
-});
-
-app.delete('/api/drivers/:id', async (req, res) => {
-  try {
-    await deleteDriver(req.params.id);
-    res.json({ ok: true });
-  } catch (error) {
-    logError('Driver delete failed', error);
-    res.status(400).json({
-      error: 'Could not delete driver.',
-      detail: error.message
-    });
-  }
-});
+settingsNamesRoutes(app, { command: farmFeatureRpc, account: currentAccount });
 
 app.get('/api/locations', async (_req, res) => {
   try {
@@ -682,32 +678,6 @@ app.get('/api/locations', async (_req, res) => {
     logError('Location fetch failed', error);
     res.status(500).json({
       error: 'Could not load locations.',
-      detail: error.message
-    });
-  }
-});
-
-app.post('/api/locations', async (req, res) => {
-  try {
-    const location = await createLocation(req.body || {});
-    res.status(201).json({ location });
-  } catch (error) {
-    logError('Location create failed', error);
-    res.status(400).json({
-      error: 'Could not create location.',
-      detail: error.message
-    });
-  }
-});
-
-app.delete('/api/locations/:id', async (req, res) => {
-  try {
-    await deleteLocation(req.params.id);
-    res.json({ ok: true });
-  } catch (error) {
-    logError('Location delete failed', error);
-    res.status(400).json({
-      error: 'Could not delete location.',
       detail: error.message
     });
   }
@@ -783,13 +753,8 @@ app.post('/api/inventory-transactions', async (req, res) => {
 
 app.delete('/api/inventory-transactions/:id', async (req, res) => {
   try {
-    const deletedLog = await deleteTicketLogByInventoryTransactionId(req.params.id);
     const result = await deleteInventoryTransaction(req.params.id);
-
-    res.json({
-      ...result,
-      deleted_ticket_log: deletedLog
-    });
+    res.json(result);
   } catch (error) {
     logError('Inventory transaction delete failed', error);
     res.status(400).json({
@@ -923,7 +888,7 @@ app.post('/api/extract-ticket', scanUpload, async (req, res) => {
   }
 });
 
-app.post('/api/submit-ticket', async (req, res) => {
+app.post('/api/submit-ticket', requireAtomicTicketClient, async (req, res) => {
   const submittedTicket = req.body?.ticket || {};
   const ticket = {
     ...normalizeTicketData(submittedTicket),
@@ -944,26 +909,7 @@ app.post('/api/submit-ticket', async (req, res) => {
   }
 
   try {
-    await validateTicketAccounting(ticket);
-    let inventoryTransactionId = '';
-
-    if (ticket.hauled_from.toLowerCase() !== 'field') {
-      const inventoryResult = await createTicketSaleTransaction({
-        binName: ticket.hauled_from,
-        bushels: ticket.bushels,
-        cropType: ticket.crop,
-        ticketId: ticket.ticket_number,
-        notes: `Ticket sale ${ticket.ticket_number}`,
-        allowOverdraw: req.body?.allow_bin_overdraw === true
-      });
-
-      inventoryTransactionId = inventoryResult?.transaction?.id || '';
-    }
-
-    const ticketLog = await addTicketLog({
-      ...ticket,
-      inventory_transaction_id: inventoryTransactionId
-    });
+    const ticketLog = await submitTicketAtomically(ticket, requireUuid(req.body?.request_id, 'Submission request ID'), req.body?.allow_bin_overdraw === true);
 
     console.log('Reviewed grain ticket submission saved', {
       ticket_number: ticket.ticket_number,
@@ -981,15 +927,21 @@ app.post('/api/submit-ticket', async (req, res) => {
   } catch (error) {
     logError('Ticket submit failed', error);
     const isOverdraw = error.code === 'BIN_INVENTORY_OVERDRAW';
-    res.status(isOverdraw ? 409 : 500).json({
+    res.status(isOverdraw || ['IDEMPOTENCY_CONFLICT','TICKET_ALREADY_EXISTS','CONTRACT_CAPACITY_EXCEEDED','CONTRACT_UNAVAILABLE','CONTRACT_CROP_MISMATCH','LEDGER_RECONCILIATION_REQUIRED','BIN_SELECTION_UNAVAILABLE','TICKET_DELETED'].includes(error.code) ? 409 : error.status || 500).json({
       error: 'Could not save ticket data.',
-      detail: error.message,
       code: error.code,
       bin_name: error.binName,
       current_bushels: error.currentBushels,
       ticket_bushels: error.ticketBushels
     });
   }
+});
+
+app.use('/api', (_req, res) => res.status(404).json({ error: 'This feature is temporarily unavailable.' }));
+app.use((error, _req, res, _next) => {
+  if (error.code === 'CORS_BLOCKED') return res.status(403).json({ error: 'Origin not allowed.' });
+  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Choose a smaller ticket photo.' });
+  return res.status(error.type === 'entity.parse.failed' ? 400 : 500).json({ error: 'We could not complete that request. Please try again.' });
 });
 
 app.listen(port, () => {

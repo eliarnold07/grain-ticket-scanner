@@ -1,3 +1,5 @@
+import { authErrorMessage } from './apiErrors.js';
+import { fetchWithTimeout, readJsonWithTimeout } from './network.js';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const SESSION_KEY = 'binflow-supabase-session';
@@ -10,18 +12,22 @@ function requireConfig() {
 
 async function authRequest(path, body) {
   requireConfig();
-  const response = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+  const response = await fetchWithTimeout(`${SUPABASE_URL}/auth/v1/${path}`, {
     method: 'POST',
     headers: {
       apikey: SUPABASE_ANON_KEY,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(body)
-  });
-  const data = await response.json().catch(() => ({}));
+  }, 20000);
+  let data;
+  try { data = await readJsonWithTimeout(response); }
+  catch (error) { if (response.ok) throw error; data = {}; }
 
   if (!response.ok) {
-    throw new Error(data.msg || data.message || data.error_description || 'Authentication failed.');
+    const error = new Error(authErrorMessage(data, response.status));
+    error.status = response.status;
+    throw error;
   }
 
   return data;
@@ -59,28 +65,29 @@ export async function signUpFarm({ farmName, email, password }) {
   return data;
 }
 
-export async function signInFarm({ email, password }) {
+export async function signInFarm({ email, password }, { persist = true } = {}) {
   const data = await authRequest('token?grant_type=password', { email, password });
-  storeSession(data);
+  if (!data?.access_token || !data.user?.id) throw new Error('Invalid authentication response');
+  if (persist) storeSession(data);
   return data;
 }
 
 export async function refreshSession(refreshToken) {
   const data = await authRequest('token?grant_type=refresh_token', { refresh_token: refreshToken });
+  if (!data?.access_token || !data.user?.id) throw new Error('Invalid authentication response');
   storeSession(data);
   return data;
 }
 
-export async function signOutFarm(accessToken) {
+export async function signOutFarm(accessToken, { clearLocal = true } = {}) {
+  if (clearLocal) storeSession(null);
   if (SUPABASE_URL && SUPABASE_ANON_KEY && accessToken) {
-    await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+    await fetchWithTimeout(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${accessToken}`
       }
-    }).catch(() => {});
+    }, 10000).catch(() => {});
   }
-
-  storeSession(null);
 }

@@ -541,7 +541,7 @@ h2 {
   text-align: center;
 }
 
-.upload-target input {
+.file-picker-button input {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;
@@ -567,6 +567,27 @@ h2 {
   font-weight: 800;
 }
 
+.capture-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.file-picker-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 12px;
+  border-radius: 8px;
+  background: #526255;
+  color: #ffffff;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+}
+
 .submit-button {
   background: #9d4f21;
 }
@@ -590,6 +611,30 @@ h2 {
 .notice.warning {
   border-left-color: #b76820;
   background: #fff2df;
+}
+
+.notice.danger {
+  border-left-color: #7a3524;
+  background: #f9e5df;
+}
+
+.delete-account-form {
+  display: grid;
+  gap: 12px;
+}
+
+.danger-button {
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 0 14px;
+  background: #7a3524;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .modal-backdrop {
@@ -1709,6 +1754,62 @@ h2 {
   }
 }
 
+/* Account management stays separate from the farm workspace. */
+.settings-view {
+  width: min(100%, 640px);
+  margin: 0 auto;
+  padding: 10px 0 28px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.settings-view h2, .settings-view h3 {
+  letter-spacing: 0;
+}
+
+.settings-view h3 {
+  font-size: 1rem;
+  margin: 0 0 6px;
+}
+
+.settings-back, .delete-account-link {
+  min-height: 44px;
+  padding: 8px 0;
+  background: transparent;
+  color: var(--forest-900);
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.settings-back { margin-bottom: 16px; }
+.delete-account-link { color: var(--danger); }
+.account-details { margin: 24px 0; }
+.account-details div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--stone-200);
+}
+.account-details dt { color: var(--muted); }
+.account-details dd { margin: 0; }
+.settings-support { padding: 8px 0 24px; }
+.settings-view a { color: var(--forest-900); }
+.account-delete-option { border-top: 1px solid var(--stone-300); padding-top: 24px; }
+.account-delete-option p, .settings-intro { color: var(--muted); }
+.account-delete-option p { margin-bottom: 0; }
+.deletion-consequences { padding-left: 22px; margin: 24px 0; }
+.deletion-consequences li { margin-bottom: 12px; }
+.confirmation-check { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; }
+.confirmation-check input { flex: 0 0 20px; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--forest-900); }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; scroll-margin-bottom: calc(100px + env(safe-area-inset-bottom)); }
+.settings-actions button { min-height: 46px; white-space: normal; }
+.settings-status { border-left: 2px solid var(--stone-300); padding: 10px 14px; margin: 20px 0; }
+.settings-view :focus-visible, .account-settings-button:focus-visible { outline: 2px solid var(--forest-800); outline-offset: 4px; }
+.settings-view .field input { min-width: 0; }
+.account-tools .account-settings-button[aria-current="page"] { background: var(--forest-100); border-color: var(--forest-800); }
+
 /* Harvest Modern brand system */
 :root {
   --forest-950: #123d2b;
@@ -1836,7 +1937,7 @@ h3 {
 
 .app-shell {
   width: min(100%, 1320px);
-  padding: 14px 14px 98px;
+  padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) calc(98px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
 }
 
 .header-band {
@@ -1902,6 +2003,11 @@ h3 {
   color: var(--muted);
   font-size: 0.64rem;
   white-space: nowrap;
+}
+
+.view-tabs button:last-child {
+  white-space: normal;
+  line-height: 1.2;
 }
 
 .view-tabs button.active {
@@ -2161,7 +2267,7 @@ h3 {
 
 @media (min-width: 720px) {
   .app-shell {
-    padding: 24px 28px 36px;
+    padding: max(24px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) calc(36px + env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
   }
 
   .account-tools div {
@@ -2213,9 +2319,13 @@ h3 {
 }
 
 @media (max-width: 420px) {
+  .settings-view .account-details { margin: 18px 0; }
+  .settings-view .account-details div { padding: 10px 0; }
+  .settings-view .settings-support { padding-bottom: 16px; }
+  .settings-view .account-delete-option { padding-top: 20px; }
   .app-shell {
-    padding-right: 10px;
-    padding-left: 10px;
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(10px, env(safe-area-inset-left));
   }
 
   .header-band .brand-lockup img {
@@ -2224,10 +2334,11 @@ h3 {
   }
 
   .header-band .brand-lockup span {
-    font-size: 2rem;
+    font-size: 1.65rem;
   }
 
   .account-tools button {
+    min-height: 44px;
     padding: 0 11px;
     font-size: 0.75rem;
   }
@@ -2273,4 +2384,79 @@ h3 {
   .email-schedule {
     white-space: normal;
   }
+}
+
+@media (max-width: 359px) {
+  .header-band { gap: 8px; }
+  .header-band .brand-lockup { gap: 6px; }
+  .header-band .brand-lockup img { width: 36px; height: 36px; }
+  .header-band .brand-lockup span { font-size: 1.5rem; }
+  .account-tools { gap: 6px; }
+  .account-tools button { padding: 0 9px; white-space: nowrap; flex-shrink: 0; }
+}
+
+/* Settings uses unframed groups; operational pages keep their existing layout. */
+.settings-home h2 { margin-bottom: 28px; }
+.settings-group { margin: 0 0 30px; }
+.settings-group h3 { font-size: .85rem; color: var(--muted); margin: 0 0 8px; }
+.settings-menu { border-top: 1px solid var(--stone-200); }
+.settings-menu button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 74px; padding: 14px 0; border: 0; border-bottom: 1px solid var(--stone-200); border-radius: 0; background: transparent; color: var(--ink); text-align: left; }
+.settings-menu button > span:first-child { display: grid; gap: 5px; min-width: 0; }
+.settings-menu button strong { font-size: 1rem; }
+.settings-menu button small { color: var(--muted); font-weight: 400; }
+.settings-menu button > span:last-child { font-size: 1.5rem; color: var(--forest-800); }
+.settings-menu button:hover { background: var(--forest-100); }
+.settings-links { display: flex; flex-wrap: wrap; gap: 22px; padding: 10px 0; }
+.auth-card > form { display: grid; gap: 16px; }
+.auth-tabs { flex-wrap: wrap; }
+.settings-view h2, .settings-view h3 { letter-spacing: 0; }
+.settings-view :focus-visible { outline: 2px solid var(--forest-800); outline-offset: 4px; }
+.settings-view input, .settings-view select, .employee-form input, .employee-form select { min-height: 44px; font-size: 16px; min-width: 0; width: 100%; }
+.saved-name-form { display: grid; gap: 14px; margin: 22px 0 30px; }
+.saved-names-list { list-style: none; padding: 0; margin: 20px 0; }
+.saved-names-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--stone-200); }
+.saved-names-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.saved-names-list li > div { display: flex; flex-shrink: 0; gap: 8px; }
+.saved-names-list button { background: transparent; color: var(--forest-900); border: 1px solid var(--stone-300); min-height: 44px; padding: 8px 12px; }
+.saved-names-list button:last-child { color: var(--danger); }
+.farm-invitation { padding: 8px 0 24px; margin-bottom: 24px; border-bottom: 1px solid var(--stone-200); }
+.farm-invitation p { color: var(--muted); }
+.ocr-consent { margin: 18px 0; border-top: 1px solid var(--stone-200); padding-top: 16px; }
+.ocr-consent p { font-size: .85rem; color: var(--muted); line-height: 1.5; }
+.farm-invitation input { width: 100%; font-size: 16px; }
+.users-panel .user-management-grid { grid-template-columns: minmax(0, 1fr); }
+
+.photo-target { min-height: 190px; padding: 24px; touch-action: manipulation; }
+.photo-target:focus-visible { outline: 3px solid var(--forest-800); outline-offset: 3px; }
+.photo-target:disabled, .capture-actions button:disabled { opacity: .6; cursor: wait; }
+.photo-preview { min-height: 190px; max-height: 360px; cursor: default; }
+.photo-preview img { max-height: 356px; }
+.photo-file-input { display: none; }
+.photo-feedback { margin: 10px 0; color: var(--forest-900); line-height: 1.5; overflow-wrap: anywhere; }
+.photo-feedback a { display: inline-block; padding: 8px; text-decoration: underline; }
+.capture-actions button { min-height: 48px; padding: 8px; border: 1px solid var(--stone-300); border-radius: 8px; background: var(--stone-50); color: var(--forest-900); }
+.remove-photo, .capture-panel > .text-button { min-height: 44px; padding: 8px 4px; border: 0; background: transparent; color: var(--forest-900); text-decoration: underline; }
+.scanner-data-status { color: var(--muted); font-size: .875rem; }
+.legacy-user-access { margin: 12px 0; }
+.legacy-user-access summary { padding: 12px 0; cursor: pointer; }
+.farm-invitation .settings-actions { flex-wrap: wrap; }
+.farm-invitation .settings-actions button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--stone-300); border-radius: 8px; background: var(--stone-50); color: var(--forest-900); }
+.users-panel .farm-user-list { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.users-panel .farm-user-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.users-panel .farm-user-role-actions { flex-wrap: wrap; }
+.users-panel .farm-user-role-actions button { min-height: 44px; }
+@media (min-width: 720px) { .users-panel .farm-user-row { grid-template-columns: minmax(0, 1fr) auto; } }
+.users-panel .farm-user-row { gap: 12px; }
+.users-panel .farm-user-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.app-shell > .app-notice { margin-bottom: 18px; overflow-wrap: anywhere; }
+.dashboard-hero h2, .account-tools strong, .ticket-log-card, .bin-card, .contract-card { overflow-wrap: anywhere; min-width: 0; }
+input, select, textarea { scroll-margin-block: 90px; }
+@media (max-width: 719px) {
+  .view-tabs button { font-size: .67rem; padding: 6px 2px; letter-spacing: 0; }
+  .review-form input, .review-form select, .auth-card input, .field input, .field select, .field textarea { font-size: 16px; }
+  .saved-names-list li { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .settings-actions { flex-wrap: wrap; }
+  .settings-actions button { min-height: 44px; }
+  .farm-user-role-actions { flex-wrap: wrap; }
 }

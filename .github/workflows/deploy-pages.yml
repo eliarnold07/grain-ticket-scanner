@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.16.0
           cache: npm
       - run: npm ci
       - run: npm test
@@ -35,7 +35,7 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
-          node -e "if (!process.env.VITE_SUPABASE_URL?.trim() || !process.env.VITE_SUPABASE_ANON_KEY?.trim()) process.exit(1)"
+          node scripts/check-mobile-env.js
           npm run build -- --base=/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
