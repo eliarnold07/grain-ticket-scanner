@@ -1,0 +1,8 @@
+{
+  "appId": "com.getbinflow.app",
+  "appName": "BinFlow",
+  "webDir": "dist-mobile",
+  "server": {
+    "iosScheme": "binflow"
+  }
+}

@@ -2,6 +2,12 @@ node_modules
 .npm-cache/
 dist
 .env
+.env.*
+!.env.example
+dist-mobile/
+credentials.env
+*.p12
+*.mobileprovision
 data/
 google-service-account.json
 *-service-account*.json

@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
-import { applyBinTransaction, clampBinBalance } from './binCapacity.js';
+import { AccountDeletionError, performAccountDeletion } from './accountDeletionService.js';
+import { clampBinBalance } from './binCapacity.js';
+import { canonicalRestPath, requireUuid, restQuery } from './restQuery.js';
 
 const requestContext = new AsyncLocalStorage();
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -32,10 +34,12 @@ async function rawRequest(path, { token, method = 'GET', body, prefer, serviceRo
 
   const response = await fetch(`${supabaseUrl}${path}`, {
     method,
+    signal: AbortSignal.timeout(30000),
     headers: {
       apikey: apiKey,
       Authorization: `Bearer ${authorization}`,
       'Content-Type': 'application/json',
+      ...(serviceRole && requestContext.getStore()?.user?.id ? { 'X-BinFlow-Actor': requestContext.getStore().user.id } : {}),
       ...(prefer ? { Prefer: prefer } : {})
     },
     body: body === undefined ? undefined : JSON.stringify(body)
@@ -54,10 +58,31 @@ async function rawRequest(path, { token, method = 'GET', body, prefer, serviceRo
 }
 
 function serviceDb(path, options = {}) {
-  return rawRequest(`/rest/v1/${path}`, {
+  return rawRequest(`/rest/v1/${canonicalRestPath(path)}`, {
     ...options,
     serviceRole: true
   });
+}
+
+export function farmFeatureRpc(name, body) {
+  if (!/^[a-z_]+$/.test(name)) throw new Error('Invalid command.');
+  return serviceDb(`rpc/${name}`, { method: 'POST', body });
+}
+
+export async function authenticateJoinRequest(authorization) {
+  const token = clean(authorization).replace(/^Bearer\s+/i, '');
+  if (!token) { const error = new Error('Authentication required'); error.status = 401; throw error; }
+  try { return await rawRequest('/auth/v1/user', { token }); }
+  catch { const error = new Error('Invalid authentication'); error.status = 401; throw error; }
+}
+
+export function signupInvitedUser(body) {
+  return rawRequest('/auth/v1/signup', { method: 'POST', body });
+}
+
+export function isPublicInvitationRequest(req) {
+  if (req.method === 'GET' && req.path === '/app-capabilities') return true;
+  return req.method === 'POST' && ['/farm-invites/preview', '/farm-invites/register', '/farm-invites/accept'].includes(req.path);
 }
 
 async function buildContext(accessToken) {
@@ -73,6 +98,7 @@ async function buildContext(accessToken) {
   }
 
   const membership = accounts[0];
+  if (!['admin', 'employee'].includes(membership.role)) throw new Error('Invalid farm role.');
   const farms = await rawRequest(
     `/rest/v1/farms?select=id,name&id=eq.${membership.farm_id}&limit=1`,
     { token: accessToken, serviceRole: useServiceRole }
@@ -94,6 +120,7 @@ async function buildContext(accessToken) {
 }
 
 export async function requireSupabaseAuth(req, res, next) {
+  if (isPublicInvitationRequest(req)) return next();
   if (req.path === '/health' || req.path === '/weekly-summary/send') return next();
 
   const token = clean(req.get('authorization')).replace(/^Bearer\s+/i, '');
@@ -133,7 +160,7 @@ function context() {
 }
 
 async function db(path, options = {}) {
-  return rawRequest(`/rest/v1/${path}`, {
+  return rawRequest(`/rest/v1/${canonicalRestPath(path, context().farmId)}`, {
     ...options,
     token: context().token,
     serviceRole: Boolean(supabaseServiceRoleKey)
@@ -172,6 +199,12 @@ export async function getWeeklySummaryDelivery(farmId, periodEnd) {
 }
 
 export async function recordWeeklySummaryDelivery(input) {
+  try {
+    return await serviceDb('rpc/binflow_record_summary', { method: 'POST', body: { p_input: input } });
+  } catch (error) {
+    // Only the pre-migration missing-function response permits legacy recording.
+    if (error.code !== 'PGRST202') throw error;
+  }
   const rows = await serviceDb('weekly_summary_deliveries', {
     method: 'POST',
     prefer: 'return=representation',
@@ -189,64 +222,13 @@ function normalizeFarmRole(value) {
 }
 
 async function attachUserToFarm(user, { farmId, displayName, email, role }) {
-  const farmRole = normalizeFarmRole(role);
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email,created_at,updated_at&user_id=eq.${user.id}&limit=1`
-  );
-  const existingMembership = memberships[0];
-  const orphanFarmId = existingMembership?.farm_id && existingMembership.farm_id !== farmId
-    ? existingMembership.farm_id
-    : null;
-
-  await rawRequest(`/auth/v1/admin/users/${user.id}`, {
-    method: 'PUT',
-    serviceRole: true,
-    body: {
-      app_metadata: {
-        ...(user.app_metadata || {}),
-        farm_id: farmId,
-        farm_role: farmRole
-      },
-      user_metadata: {
-        ...(user.user_metadata || {}),
-        display_name: displayName
-      }
-    }
-  });
-
-  if (existingMembership) {
-    await db(`farm_accounts?user_id=eq.${user.id}`, { method: 'DELETE' });
-  }
-
-  const rows = await db('farm_accounts', {
+  return serviceDb('rpc/binflow_attach_member', {
     method: 'POST',
-    prefer: 'return=representation',
     body: {
-      user_id: user.id,
-      farm_id: farmId,
-      role: farmRole,
-      display_name: displayName,
-      email,
-      updated_at: new Date().toISOString()
+      p_actor: context().user.id, p_target: user.id, p_farm: farmId,
+      p_name: displayName, p_email: email, p_role: normalizeFarmRole(role)
     }
   });
-  const attached = rows[0];
-
-  if (!attached || attached.farm_id !== farmId || attached.role !== farmRole) {
-    throw new Error('User login was created, but its farm membership could not be verified.');
-  }
-
-  if (orphanFarmId) {
-    const remainingMembers = await db(
-      `farm_accounts?select=user_id&farm_id=eq.${orphanFarmId}&limit=1`
-    );
-
-    if (remainingMembers.length === 0) {
-      await db(`farms?id=eq.${orphanFarmId}`, { method: 'DELETE' });
-    }
-  }
-
-  return attached;
 }
 
 async function findAuthUserByEmail(email) {
@@ -265,6 +247,64 @@ async function farmHasOperationalData(farmId) {
   return results.some((rows) => rows.length > 0);
 }
 
+async function deletionAvailability() {
+  if (String(process.env.ACCOUNT_DELETION_ENABLED || '').toLowerCase() !== 'true' || !supabaseServiceRoleKey) return false;
+  try {
+    // A flag alone must never reactivate the unsafe multi-request implementation.
+    const capability = await serviceDb('rpc/binflow_account_deletion_capability', { method: 'POST', body: {} });
+    return capability?.version === 2 && capability?.revision === 2;
+  } catch {
+    return false;
+  }
+}
+
+export async function getAccountDeletionPreview() {
+  if (!await deletionAvailability()) throw new AccountDeletionError('DELETION_UNAVAILABLE', 503);
+  const { farmId, user } = context();
+  try {
+    const preview = await serviceDb('rpc/binflow_preview_account_deletion', {
+      method: 'POST', body: { p_actor: user.id, p_farm: farmId }
+    });
+    if (preview?.version !== 2) throw new Error('Unsupported deletion protocol.');
+    return { ...preview, deletion_available: true };
+  } catch { throw new AccountDeletionError('DELETION_UNAVAILABLE', 503); }
+}
+
+export async function deleteCurrentAccount(input = {}) {
+  const { farmId, user } = context();
+  return performAccountDeletion({
+    input,
+    authenticatedUser: user,
+    farmId,
+    available: await deletionAvailability(),
+    reauthenticate: async (email, password) => {
+      let verified;
+      try {
+        verified = await rawRequest('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password } });
+        return verified?.user;
+      } catch {
+        throw new AccountDeletionError('REAUTHENTICATION_FAILED', 403);
+      } finally {
+        if (verified?.access_token) {
+          await rawRequest('/auth/v1/logout?scope=local', { token: verified.access_token, method: 'POST' }).catch(() => {});
+        }
+      }
+    },
+    executeAtomic: async ({ userId, farmId: targetFarm, confirmEmail, successorId }) => {
+      try {
+        return await serviceDb('rpc/binflow_delete_account', {
+          method: 'POST',
+          body: { p_user_id: userId, p_farm_id: targetFarm, p_confirm_email: confirmEmail, p_successor: successorId }
+        });
+      } catch (error) {
+        const codes = ['OWNERSHIP_TRANSFER_REQUIRED', 'INVALID_SUCCESSOR', 'STORAGE_CLEANUP_REQUIRED', 'DELETION_SCHEMA_REVIEW_REQUIRED', 'FARM_MEMBERSHIP_CHANGED', 'LAST_ADMIN_REQUIRED'];
+        const code = codes.includes(error.message) ? error.message : 'DELETION_FAILED';
+        throw new AccountDeletionError(code, code === 'DELETION_FAILED' ? 503 : 409);
+      }
+    }
+  });
+}
+
 export async function createFarmUserAccount(input) {
   const { farmId, role } = context();
   if (role !== 'admin') throw new Error('Only farm admins can create user accounts.');
@@ -279,6 +319,12 @@ export async function createFarmUserAccount(input) {
   if (!displayName) throw new Error('User name is required.');
   if (password.length < 8) throw new Error('User password must be at least 8 characters.');
 
+  // GoTrue applies app_metadata after its INSERT trigger. A one-use capability
+  // binds the new account to this Admin/farm/email inside the Auth transaction.
+  const provision = await serviceDb('rpc/binflow_prepare_user_provision', {
+    method: 'POST', body: { p_actor: context().user.id, p_email: email }
+  });
+  requireUuid(provision?.token);
   const created = await rawRequest('/auth/v1/admin/users', {
     method: 'POST',
     serviceRole: true,
@@ -287,11 +333,8 @@ export async function createFarmUserAccount(input) {
       password,
       email_confirm: true,
       user_metadata: {
-        display_name: displayName
-      },
-      app_metadata: {
-        farm_id: farmId,
-        farm_role: farmRole
+        display_name: displayName,
+        binflow_provision_token: provision.token
       }
     }
   });
@@ -308,40 +351,12 @@ export async function updateFarmUserRole(userId, requestedRole) {
   const { farmId, role } = context();
   if (role !== 'admin') throw new Error('Only farm admins can change user roles.');
   if (!supabaseServiceRoleKey) throw new Error('Role changes require SUPABASE_SERVICE_ROLE_KEY.');
+  if (!['admin', 'employee'].includes(requestedRole)) throw new Error('INVALID_FARM_ROLE');
 
-  const farmRole = normalizeFarmRole(requestedRole);
-  const memberships = await db(
-    `farm_accounts?select=user_id,farm_id,role,display_name,email&user_id=eq.${userId}&farm_id=eq.${farmId}&limit=1`
-  );
-  const membership = memberships[0];
-  if (!membership) throw new Error('Farm user not found.');
-  if (membership.role === farmRole) return membership;
-
-  const user = await findAuthUserByEmail(clean(membership.email).toLowerCase());
-  if (!user || user.id !== userId) throw new Error('The matching login could not be found.');
-
-  await rawRequest(`/auth/v1/admin/users/${userId}`, {
-    method: 'PUT',
-    serviceRole: true,
-    body: {
-      app_metadata: {
-        ...(user.app_metadata || {}),
-        farm_id: farmId,
-        farm_role: farmRole
-      }
-    }
+  return serviceDb('rpc/binflow_change_member', {
+    method: 'POST',
+    body: { p_actor: context().user.id, p_target: userId, p_role: normalizeFarmRole(requestedRole) }
   });
-
-  const rows = await db(`farm_accounts?user_id=eq.${userId}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: {
-      role: farmRole,
-      updated_at: new Date().toISOString()
-    }
-  });
-  if (!rows[0]) throw new Error('The user role could not be updated.');
-  return rows[0];
 }
 
 export async function repairEmployeeAccount(input) {
@@ -414,201 +429,41 @@ export async function listBins() {
 }
 
 export async function createBin(input) {
-  const { farmId } = context();
-  const now = new Date().toISOString();
-  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
-  const current = clampBinBalance(input.current_bushels, capacity);
-  const rows = await db('bins', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      farm_id: farmId,
-      bin_name: clean(input.bin_name),
-      crop_type: clean(input.crop_type),
-      estimated_capacity_bushels: capacity,
-      current_bushels: current,
-      notes: clean(input.notes),
-      created_at: now,
-      updated_at: now
-    }
-  });
-  const bin = rows[0];
-
-  if (numeric(bin.current_bushels) !== 0) {
-    await db('inventory_transactions', {
-      method: 'POST',
-      body: {
-        farm_id: farmId,
-        bin_id: bin.id,
-        transaction_type: 'MANUAL_ADJUSTMENT',
-        crop_type: bin.crop_type,
-        bushel_amount: numeric(bin.current_bushels),
-        applied_bushel_amount: numeric(bin.current_bushels),
-        previous_bin_balance: 0,
-        new_bin_balance: numeric(bin.current_bushels),
-        notes: 'Initial bin balance'
-      }
-    });
-  }
-
-  return publicBin(bin);
+  const mode = numeric(input.current_bushels) > 0 ? 'bushels' : 'empty';
+  const result = await inventoryCommand('create_bin', { ...input, opening_mode: mode });
+  return publicBin(result.bin);
 }
 
 export async function updateBin(id, input) {
-  const { farmId } = context();
-  const existing = await getBin(id);
-  if (!existing) throw new Error('Bin not found.');
-  const capacity = Math.max(0, numeric(input.estimated_capacity_bushels));
-  const rows = await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: {
-      bin_name: clean(input.bin_name),
-      crop_type: clean(input.crop_type),
-      estimated_capacity_bushels: capacity,
-      current_bushels: clampBinBalance(existing.current_bushels, capacity),
-      notes: clean(input.notes),
-      updated_at: new Date().toISOString()
-    }
-  });
-  return publicBin(rows[0]);
+  const result = await inventoryCommand('update_bin', { ...input, bin_id: requireUuid(id) });
+  return publicBin(result.bin);
 }
 
-export async function deleteBin(id) {
-  const { farmId } = context();
-  await db(`bins?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  return { ok: true };
-}
-
-async function getBin(id) {
-  const { farmId } = context();
-  const rows = await db(`bins?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
-  return rows[0] || null;
-}
-
-async function getBinByName(name) {
-  const bins = await listBins();
-  return bins.find((bin) => bin.bin_name.toLowerCase() === clean(name).toLowerCase()) || null;
+export function deleteBin(id) {
+  return inventoryCommand('delete_bin', { bin_id: requireUuid(id) });
 }
 
 export async function createInventoryTransaction(input) {
-  const { farmId } = context();
-  const bin = await getBin(input.bin_id);
-  if (!bin) throw new Error('Bin not found.');
-
   const type = clean(input.transaction_type).toUpperCase();
-  const result = applyBinTransaction({
-    previousBalance: bin.current_bushels,
-    capacity: bin.estimated_capacity_bushels,
-    type,
-    amount: input.bushel_amount
-  });
-  const { requested: amount, previous, next, appliedAmount: applied } = result;
-
-  const transactionRows = await db('inventory_transactions', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      farm_id: farmId,
-      bin_id: bin.id,
-      transaction_type: type,
-      crop_type: bin.crop_type,
-      bushel_amount: amount,
-      applied_bushel_amount: applied,
-      previous_bin_balance: previous,
-      new_bin_balance: next,
-      ticket_id: input.ticket_id || null,
-      ticket_number: clean(input.ticket_number),
-      notes: clean(input.notes),
-      exceeded_estimated_inventory: amount > previous && ['REMOVE_GRAIN', 'TICKET_SALE'].includes(type)
-    }
-  });
-  const binRows = await db(`bins?id=eq.${bin.id}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: { current_bushels: next, updated_at: new Date().toISOString() }
-  });
-  return {
-    bin: publicBin(binRows[0]),
-    transaction: transactionRows[0],
-    capacity_capped: result.capacityCapped
-  };
+  if (!['ADD_GRAIN', 'REMOVE_GRAIN', 'MANUAL_ADJUSTMENT'].includes(type)) throw new Error('Use ticket submission for a ticket sale, or a supported inventory adjustment.');
+  const result = await inventoryCommand('transaction', { ...input, bin_id: requireUuid(input.bin_id), transaction_type: type });
+  return { ...result, bin: publicBin(result.bin) };
 }
 
-export async function createTicketSaleTransaction({ binName, bushels, cropType, ticketId, notes, allowOverdraw = false }) {
-  const bin = await getBinByName(binName);
-  if (!bin) return null;
-  const amount = numeric(bushels);
-
-  if (amount > numeric(bin.current_bushels) && !allowOverdraw) {
-    const error = new Error('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
-    error.code = 'BIN_INVENTORY_OVERDRAW';
-    error.binName = bin.bin_name;
-    error.currentBushels = numeric(bin.current_bushels);
-    error.ticketBushels = amount;
-    throw error;
-  }
-
-  if (cropType && cropType !== bin.crop_type) {
-    await updateBin(bin.id, { ...bin, crop_type: cropType });
-  }
-
-  return createInventoryTransaction({
-    bin_id: bin.id,
-    transaction_type: 'TICKET_SALE',
-    bushel_amount: amount,
-    ticket_number: ticketId,
-    notes
-  });
+export function deleteInventoryTransaction(id) {
+  return inventoryCommand('delete_transaction', { id: requireUuid(id) });
 }
 
-async function recalculateBin(binId) {
-  const { farmId } = context();
-  const bin = await getBin(binId);
-  if (!bin) return;
-  const capacity = numeric(bin.estimated_capacity_bushels);
-  const transactions = await db(`inventory_transactions?select=*&farm_id=eq.${farmId}&bin_id=eq.${binId}&order=created_at.asc`);
-  let balance = 0;
-
-  for (const transaction of transactions) {
-    const previous = balance;
-    if (transaction.transaction_type === 'ADD_GRAIN') {
-      balance = clampBinBalance(balance + numeric(transaction.bushel_amount), capacity);
-    }
-    if (['REMOVE_GRAIN', 'TICKET_SALE'].includes(transaction.transaction_type)) {
-      balance = Math.max(0, balance - numeric(transaction.applied_bushel_amount ?? transaction.bushel_amount));
-    }
-    if (transaction.transaction_type === 'MANUAL_ADJUSTMENT') {
-      balance = clampBinBalance(transaction.bushel_amount, capacity);
-    }
-    await db(`inventory_transactions?id=eq.${transaction.id}&farm_id=eq.${farmId}`, {
-      method: 'PATCH',
-      body: { previous_bin_balance: previous, new_bin_balance: balance }
-    });
-  }
-
-  await db(`bins?id=eq.${binId}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    body: { current_bushels: balance, updated_at: new Date().toISOString() }
-  });
+function inventoryCommand(action, input) {
+  return farmFeatureRpc('farm_inventory_command', { p_actor: context().member.user_id, p_action: action, p_input: input });
 }
 
-export async function deleteInventoryTransaction(id) {
-  const { farmId } = context();
-  const rows = await db(`inventory_transactions?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
-  const transaction = rows[0];
-  if (!transaction) return { ok: true, deleted: false };
-  await db(`inventory_transactions?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  await recalculateBin(transaction.bin_id);
-  return { ok: true, deleted: true };
-}
-
-export async function listInventoryTransactions(filters = {}) {
-  const { farmId } = context();
-  let path = `inventory_transactions?select=*&farm_id=eq.${farmId}&order=created_at.desc`;
-  if (filters.bin_id) path += `&bin_id=eq.${filters.bin_id}`;
-  if (filters.transaction_type) path += `&transaction_type=eq.${encodeURIComponent(filters.transaction_type)}`;
-  return db(path);
+export function listInventoryTransactions(filters = {}) {
+  return db(restQuery('inventory_transactions', {
+    select: '*', farm_id: `eq.${context().farmId}`, order: 'created_at.desc',
+    bin_id: filters.bin_id ? `eq.${requireUuid(filters.bin_id)}` : undefined,
+    transaction_type: filters.transaction_type ? `eq.${filters.transaction_type}` : undefined
+  }));
 }
 
 function normalizeTicket(ticket, existing = {}) {
@@ -642,50 +497,40 @@ function normalizeTicket(ticket, existing = {}) {
   };
 }
 
-export async function addTicketLog(ticket) {
-  const { farmId, user, member } = context();
-  const rows = await db('tickets', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: {
-      farm_id: farmId,
-      ...normalizeTicket(ticket),
-      scanned_by_user_id: user.id,
-      scanned_by_name: clean(member.display_name) || clean(member.email) || 'Farm user',
-      created_at: new Date().toISOString()
+export async function submitTicketAtomically(ticket, requestId, allowOverdraw = false) {
+  try {
+    const { updated_at, ...stableTicket } = normalizeTicket(ticket);
+    const result = await farmFeatureRpc('farm_ticket_command', {
+      p_actor: context().member.user_id, p_action: 'submit', p_id: null,
+      p_input: { ...stableTicket, allow_overdraw: allowOverdraw }, p_request: requireUuid(requestId)
+    });
+    return result.ticket;
+  } catch (error) {
+    for (const code of ['BIN_INVENTORY_OVERDRAW','IDEMPOTENCY_CONFLICT','TICKET_ALREADY_EXISTS','CONTRACT_CAPACITY_EXCEEDED','CONTRACT_UNAVAILABLE','CONTRACT_CROP_MISMATCH','LEDGER_RECONCILIATION_REQUIRED','BIN_SELECTION_UNAVAILABLE','TICKET_DELETED']) {
+      if (error.message.includes(code)) error.code = code;
     }
-  });
-  return rows[0];
+    throw error;
+  }
+}
+
+export function ticketRequestStatus(requestId) {
+  return farmFeatureRpc('ticket_request_status', { p_actor: context().member.user_id, p_request: requireUuid(requestId) });
 }
 
 export async function updateTicketLog(id, input) {
   const { farmId } = context();
-  const existing = (await db(`tickets?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`))[0];
+  const existing = (await db(restQuery('tickets', { select: '*', id: `eq.${requireUuid(id)}`, farm_id: `eq.${farmId}`, limit: 1 })))[0];
   if (!existing) throw new Error('Ticket not found.');
-  const ticket = normalizeTicket(input, existing);
-  delete ticket.id;
-  delete ticket.farm_id;
-  delete ticket.created_at;
-  const rows = await db(`tickets?id=eq.${id}&farm_id=eq.${farmId}`, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: ticket
-  });
-  await db('payments?on_conflict=farm_id,ticket_id', {
-    method: 'POST',
-    prefer: 'resolution=merge-duplicates',
-    body: {
-      farm_id: farmId,
-      ticket_id: id,
-      payment_status: ticket.payment_status,
-      payment_date: ticket.payment_date,
-      amount_received: ticket.amount_received,
-      reference: ticket.payment_reference,
-      notes: ticket.payment_notes,
-      updated_at: new Date().toISOString()
-    }
-  });
-  return rows[0];
+  try {
+    const result = await farmFeatureRpc('farm_ticket_command', {
+      p_actor: context().member.user_id, p_action: 'update', p_id: requireUuid(id),
+      p_input: normalizeTicket(input, existing), p_request: null
+    });
+    return result.ticket;
+  } catch(error) {
+    for(const code of ['INVENTORY_EDIT_REQUIRES_REENTRY','CONTRACT_CAPACITY_EXCEEDED','CONTRACT_UNAVAILABLE','CONTRACT_CROP_MISMATCH']) if(error.message.includes(code)) error.code=code;
+    throw error;
+  }
 }
 
 export async function getTicketLogSnapshot() {
@@ -724,19 +569,10 @@ export async function listTicketLogs(filters = {}) {
 }
 
 export async function deleteTicketLog(id) {
-  const { farmId } = context();
-  const rows = await db(`tickets?select=*&id=eq.${id}&farm_id=eq.${farmId}&limit=1`);
-  if (!rows[0]) throw new Error('Ticket not found.');
-  await db(`tickets?id=eq.${id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  return rows[0];
-}
-
-export async function deleteTicketLogByInventoryTransactionId(transactionId) {
-  const { farmId } = context();
-  const rows = await db(`tickets?select=*&inventory_transaction_id=eq.${transactionId}&farm_id=eq.${farmId}&limit=1`);
-  if (!rows[0]) return null;
-  await db(`tickets?id=eq.${rows[0].id}&farm_id=eq.${farmId}`, { method: 'DELETE' });
-  return rows[0];
+  const result = await farmFeatureRpc('farm_ticket_command', {
+    p_actor: context().member.user_id, p_action: 'delete', p_id: requireUuid(id), p_input: {}, p_request: null
+  });
+  return result.deleted_ticket_log;
 }
 
 function contractWithBalances(contract, tickets) {

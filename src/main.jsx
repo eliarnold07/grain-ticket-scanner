@@ -2,8 +2,19 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import binFlowMark from './assets/binflow-mark.png';
+import AccountSettings from './AccountSettings.jsx';
+import SettingsHome from './SettingsHome.jsx';
+import SavedNamesSettings from './SavedNamesSettings.jsx';
+import FarmInvitationSettings from './FarmInvitationSettings.jsx';
+import JoinFarm from './JoinFarm.jsx';
+import TicketPhotoCapture from './TicketPhotoCapture.jsx';
+import useScannerData from './useScannerData.js';
+import { fetchWithTimeout, readJsonWithTimeout, withDeadline } from './network.js';
+import { missingTicketFields, ticketBushels as parseTicketBushels } from './ticketReview.js';
+import { pendingTicketRequest, completeTicketRequest, confirmedTicketReceipt, requireAtomicTicketWrites, postTicketForActor } from './ticketRequest.js';
+import { canOpenView, SETTINGS_SCREENS } from './settingsNavigation.js';
+import { cleanMessage, readErrorResponse, isInvalidSessionError } from './apiErrors.js';
 import { getStoredSession, isSessionExpired, refreshSession, signInFarm, signOutFarm, signUpFarm, storeSession } from './supabaseAuth.js';
-
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const OTHER_VALUE = '__other__';
 const MAX_IMAGE_DIMENSION = 1800;
@@ -72,14 +83,6 @@ function emptyTicket() {
   return Object.fromEntries(fields.map((field) => [field, '']));
 }
 
-function cleanMessage(error) {
-  if (error?.message?.includes('Failed to fetch') || error?.message?.includes('Load failed')) {
-    return `Network request failed: ${error.message}. Check that the backend URL and CORS settings are correct.`;
-  }
-
-  return error.message || 'Something went wrong. Please try again.';
-}
-
 function loadImageFromFile(file) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -135,21 +138,6 @@ async function convertImageToJpeg(file) {
     type: 'image/jpeg',
     lastModified: Date.now()
   });
-}
-
-async function readErrorResponse(response) {
-  const text = await response.text();
-
-  if (!text) {
-    return response.statusText || `Request failed with status ${response.status}`;
-  }
-
-  try {
-    const data = JSON.parse(text);
-    return data.detail ? `${data.error} ${data.detail}` : data.error || text;
-  } catch {
-    return text;
-  }
 }
 
 function uniqueOptions(values = []) {
@@ -269,7 +257,23 @@ function App() {
   const [authForm, setAuthForm] = useState({ farmName: '', email: '', password: '' });
   const [authStatus, setAuthStatus] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener('online', update); window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
+  const [invitationsAvailable, setInvitationsAvailable] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchWithTimeout(`${API_BASE}/api/app-capabilities`, { signal: controller.signal }, 20000)
+      .then(response => response.ok ? readJsonWithTimeout(response) : null)
+      .then(data => { if (!controller.signal.aborted) setInvitationsAvailable(data?.farm_invitations === true); }).catch(() => {});
+    return () => controller.abort();
+  }, []);
   const [activeView, setActiveView] = useState('dashboard');
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [activeView]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [ticket, setTicket] = useState(emptyTicket);
@@ -279,12 +283,9 @@ function App() {
   });
   const [contractOverage, setContractOverage] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
-  const [dropdowns, setDropdowns] = useState({
-    bins: [],
-    haulers: [],
-    destinations: [],
-    missing_tabs: []
-  });
+  const { dropdowns, scannerContracts, isLoadingDropdowns, dropdownError,
+    isLoadingScannerContracts, scannerContractsError, loadDropdowns,
+    loadScannerContracts, resetScannerData } = useScannerData(apiFetch, session?.user?.id);
   const [otherValues, setOtherValues] = useState({
     delivered_to: '',
     hauled_by: '',
@@ -296,10 +297,12 @@ function App() {
     hauled_from: false
   });
   const [status, setStatus] = useState('Choose or take a photo to begin.');
+  const [requestError, setRequestError] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
+  const [ocrConsent, setOcrConsent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const ticketSubmittingRef = useRef(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
-  const [isLoadingDropdowns, setIsLoadingDropdowns] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [updatingPaymentIds, setUpdatingPaymentIds] = useState([]);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -312,6 +315,7 @@ function App() {
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
   const [userStatus, setUserStatus] = useState('');
+  const [changingMember, setChangingMember] = useState('');
   const [contractForm, setContractForm] = useState(blankContractForm);
   const [editingContractId, setEditingContractId] = useState('');
   const [editingTicket, setEditingTicket] = useState(null);
@@ -354,13 +358,13 @@ function App() {
   const outstandingContracts = useMemo(() => {
     const ticketCrop = String(ticket.crop || '').trim().toLowerCase();
 
-    return contracts.filter((contract) => {
+    return scannerContracts.filter((contract) => {
       const status = String(contract.status || '').toLowerCase();
       const commodity = String(contract.commodity || '').trim().toLowerCase();
       const isOpen = Number(contract.remaining_bushels) > 0 && !['closed', 'cancelled'].includes(status);
       return isOpen && (!ticketCrop || !commodity || commodity === ticketCrop);
     });
-  }, [contracts, ticket.crop]);
+  }, [scannerContracts, ticket.crop]);
   const [dashboard, setDashboard] = useState(emptyDashboard);
 
   const isAuthenticated = Boolean(session?.access_token);
@@ -388,11 +392,13 @@ function App() {
           terminalAuthFailureRef.current = false;
           setSession(readySession);
         }
-      } catch {
-        storeSession(null);
+      } catch (error) {
+        // A transport outage is not evidence that the refresh token is invalid.
+        if (isInvalidSessionError(error)) storeSession(null);
         if (!cancelled) {
           sessionRef.current = null;
           setSession(null);
+          setAuthStatus(cleanMessage(error));
         }
       } finally {
         if (!cancelled) setIsAuthReady(true);
@@ -403,7 +409,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authAttempt]);
 
   useEffect(() => {
     if (!isAuthReady || !isAuthenticated) {
@@ -438,8 +444,8 @@ function App() {
     }
 
     initializeFarmData();
-    const intervalId = window.setInterval(() => loadDropdowns({ silent: true }), 60000);
-    const handleFocus = () => loadDropdowns({ silent: true });
+    const handleFocus = () => { loadDropdowns(); loadScannerContracts(); };
+    const intervalId = window.setInterval(handleFocus, 60000);
 
     window.addEventListener('focus', handleFocus);
 
@@ -451,20 +457,28 @@ function App() {
   }, [isAuthReady, isAuthenticated]);
 
   async function apiFetch(path, options = {}, retry = true) {
+    const { timeoutMs = 90000, ...requestOptions } = options;
     const activeSession = sessionRef.current;
     if (!activeSession?.access_token || terminalAuthFailureRef.current) {
       throw new Error('Please log in to continue.');
     }
 
-    const response = await fetch(`${API_BASE}${path}`, {
-      ...options,
+    const response = await fetchWithTimeout(`${API_BASE}${path}`, {
+      ...requestOptions,
       headers: {
-        ...(options.headers || {}),
+        ...(requestOptions.headers || {}),
         Authorization: `Bearer ${activeSession.access_token}`
       }
-    });
+    }, timeoutMs);
+
+    if (terminalAuthFailureRef.current || sessionRef.current?.user?.id !== activeSession.user?.id) {
+      const error = new Error('Your account session changed. Please sign in again.');
+      error.code = 'AUTH_CONTEXT_CHANGED';
+      throw error;
+    }
 
     if (response.status !== 401 || !retry || !activeSession.refresh_token) {
+      if (response.status === 401) endInvalidSession();
       return response;
     }
 
@@ -472,6 +486,12 @@ function App() {
       if (!refreshPromiseRef.current) {
         refreshPromiseRef.current = refreshSession(activeSession.refresh_token)
           .then((nextSession) => {
+            if (terminalAuthFailureRef.current || sessionRef.current?.access_token !== activeSession.access_token) {
+              storeSession(sessionRef.current);
+              const error = new Error('Your account session changed. Please sign in again.');
+              error.code = 'AUTH_CONTEXT_CHANGED';
+              throw error;
+            }
             sessionRef.current = nextSession;
             setSession(nextSession);
             return nextSession;
@@ -482,13 +502,19 @@ function App() {
       }
 
       const nextSession = await refreshPromiseRef.current;
-      const retryResponse = await fetch(`${API_BASE}${path}`, {
-        ...options,
+      const retryResponse = await fetchWithTimeout(`${API_BASE}${path}`, {
+        ...requestOptions,
         headers: {
-          ...(options.headers || {}),
+          ...(requestOptions.headers || {}),
           Authorization: `Bearer ${nextSession.access_token}`
         }
-      });
+      }, timeoutMs);
+
+      if (terminalAuthFailureRef.current || sessionRef.current?.user?.id !== nextSession.user?.id) {
+        const error = new Error('Your account session changed. Please sign in again.');
+        error.code = 'AUTH_CONTEXT_CHANGED';
+        throw error;
+      }
 
       if (retryResponse.status === 401) {
         endInvalidSession();
@@ -496,13 +522,14 @@ function App() {
 
       return retryResponse;
     } catch (error) {
-      endInvalidSession();
+      if (isInvalidSessionError(error)) endInvalidSession();
       throw error;
     }
   }
 
   function endInvalidSession() {
     if (terminalAuthFailureRef.current) return;
+    clearPrivateForms();
     terminalAuthFailureRef.current = true;
     refreshPromiseRef.current = null;
     sessionRef.current = null;
@@ -510,19 +537,27 @@ function App() {
     setSession(null);
     setFarm(null);
     setAccount(null);
+    setActiveView('dashboard');
+    setAuthMode('login');
     setAuthStatus('Your session expired. Please log in again.');
+  }
+
+  function reportError(error) {
+    const message = cleanMessage(error);
+    setStatus(message);
+    setRequestError(message);
   }
 
   async function loadFarmSession() {
     try {
-      const response = await apiFetch('/api/session');
+      const response = await apiFetch('/api/session', { timeoutMs: 20000 });
       if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       setFarm(data.farm);
       setAccount(data.account);
       return data;
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
       return null;
     }
   }
@@ -558,12 +593,32 @@ function App() {
     }
   }
 
+  function clearPrivateForms() {
+    setRequestError('');
+    setUserStatus('');
+    setEmployeeForm(blankEmployeeForm);
+    setEditingTicket(null);
+    setEditingContractId(''); setContractForm(blankContractForm);
+    setEditingBinId(''); setBinForm(blankBinForm);
+    setTransactionForms({});
+    setHistoryFilters({ search: '', date: '', crop: '', ticket_number: '', elevator: '', assignment_status: '', payment_status: '' });
+    setShowArchivedTickets(false); setShowArchivedContracts(false);
+    setAuthForm(current => ({ ...current, password: '' }));
+    setLocations([]);
+    setFarmUsers([]); setTicketLogs([]); setBins([]); setContracts([]); setDrivers([]);
+    resetScannerData();
+    setDashboard(emptyDashboard());
+    resetForNextTicket();
+  }
+
   async function logout() {
+    clearPrivateForms();
+    setAuthMode('login'); setAuthStatus('');
     const activeSession = sessionRef.current;
     terminalAuthFailureRef.current = true;
     refreshPromiseRef.current = null;
     sessionRef.current = null;
-    await signOutFarm(activeSession?.access_token);
+    signOutFarm(activeSession?.access_token);
     setSession(null);
     setFarm(null);
     setAccount(null);
@@ -573,17 +628,23 @@ function App() {
     setBins([]);
     setContracts([]);
     setDrivers([]);
-    setDropdowns({ bins: [], haulers: [], destinations: [], missing_tabs: [] });
+    resetScannerData();
     setDashboard(emptyDashboard());
     resetForNextTicket();
     setActiveView('dashboard');
   }
 
   useEffect(() => {
-    if (isEmployee && activeView !== 'scanner') {
+    if (isEmployee && !canOpenView('employee', activeView)) {
       setActiveView('scanner');
     }
   }, [activeView, isEmployee]);
+
+  useEffect(() => {
+    if (isAuthReady && isAuthenticated && account?.user_id && activeView === 'scanner') {
+      loadDropdowns(); loadScannerContracts();
+    }
+  }, [activeView, isAuthReady, isAuthenticated, account?.user_id, loadDropdowns, loadScannerContracts]);
 
   useEffect(() => {
     if (isAuthReady && isAuthenticated && isAdmin && activeView === 'dashboard') {
@@ -603,41 +664,6 @@ function App() {
     return () => window.clearTimeout(timeoutId);
   }, [activeView, historyFilters, isAdmin, isAuthReady, isAuthenticated, showArchivedTickets]);
 
-  async function loadDropdowns(options = {}) {
-    if (!options.silent) {
-      setIsLoadingDropdowns(true);
-    }
-
-    try {
-      const response = await apiFetch('/api/dropdowns');
-
-      if (!response.ok) {
-        throw new Error(await readErrorResponse(response));
-      }
-
-      const data = await response.json();
-
-      setDropdowns({
-        bins: uniqueOptions(data.bins),
-        haulers: uniqueOptions(data.haulers),
-        destinations: uniqueOptions(data.destinations),
-        missing_tabs: data.missing_tabs || []
-      });
-
-      if (data.missing_tabs?.length) {
-        setStatus(`Dropdowns loaded, but missing sheet tabs: ${data.missing_tabs.join(', ')}.`);
-      }
-    } catch (error) {
-      if (!options.silent) {
-        setStatus(cleanMessage(error));
-      }
-    } finally {
-      if (!options.silent) {
-        setIsLoadingDropdowns(false);
-      }
-    }
-  }
-
   async function loadDashboard(options = {}) {
     if (!options.silent) {
       setIsLoadingDashboard(true);
@@ -654,7 +680,7 @@ function App() {
       setDashboard(data);
     } catch (error) {
       if (!options.silent) {
-        setStatus(cleanMessage(error));
+        reportError(error);
       }
     } finally {
       if (!options.silent) {
@@ -692,7 +718,7 @@ function App() {
       setTicketLogs(data.logs || []);
     } catch (error) {
       if (!options.silent) {
-        setStatus(cleanMessage(error));
+        reportError(error);
       }
     } finally {
       if (!options.silent) {
@@ -709,18 +735,7 @@ function App() {
       const data = await response.json();
       setContracts(data.contracts || []);
     } catch (error) {
-      if (!options.silent) setStatus(cleanMessage(error));
-    }
-  }
-
-  async function loadScannerContracts(options = {}) {
-    try {
-      const response = await apiFetch('/api/scanner-contracts');
-      if (!response.ok) throw new Error(await readErrorResponse(response));
-      const data = await response.json();
-      setContracts(data.contracts || []);
-    } catch (error) {
-      if (!options.silent) setStatus(cleanMessage(error));
+      if (!options.silent) reportError(error);
     }
   }
 
@@ -767,22 +782,24 @@ function App() {
     }
   }
 
-  async function promoteUser(user) {
-    if (user.role === 'admin') return;
-
-    setUserStatus(`Promoting ${user.display_name || user.email} to administrator...`);
+  async function changeUserRole(user, nextRole) {
+    if (changingMember || user.role === nextRole) return;
+    if (!window.confirm(`Make ${user.display_name || user.email} ${nextRole === 'admin' ? 'an Administrator with farm management access' : 'an Employee with ticket scanning access'}?`)) return;
+    setChangingMember(user.user_id);
+    setUserStatus('Updating farm access...');
     try {
       const response = await apiFetch(`/api/users/${user.user_id}/role`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'admin' })
+        body: JSON.stringify({ role: nextRole })
       });
       if (!response.ok) throw new Error(await readErrorResponse(response));
       await loadFarmUsers({ silent: true });
-      setUserStatus(`${user.display_name || user.email} is now an administrator.`);
+      if (user.user_id === account.user_id) await loadFarmSession();
+      setUserStatus('Farm access updated.');
     } catch (error) {
       setUserStatus(cleanMessage(error));
-    }
+    } finally { setChangingMember(''); }
   }
 
   async function repairEmployee() {
@@ -811,6 +828,31 @@ function App() {
     } finally {
       setIsCreatingEmployee(false);
     }
+  }
+
+  function finishAccountDeletion() {
+    if (sessionRef.current?.user?.id !== account?.user_id) return;
+    clearPrivateForms();
+    // Clear in-memory farm data as well as the persisted session after confirmed deletion.
+    terminalAuthFailureRef.current = true;
+    refreshPromiseRef.current = null;
+    sessionRef.current = null;
+    storeSession(null);
+    setSession(null);
+    setFarm(null);
+    setAccount(null);
+    setFarmUsers([]);
+    setTicketLogs([]);
+    setBins([]);
+    setContracts([]);
+    setDrivers([]);
+    setLocations([]);
+    resetScannerData();
+    setDashboard(emptyDashboard());
+    resetForNextTicket();
+    setActiveView('dashboard');
+    setAuthStatus('Your account has been deleted.');
+    setAuthMode('login');
   }
 
   function startEditingTicket(log) {
@@ -888,7 +930,7 @@ function App() {
       await Promise.all([loadTicketHistory(), loadContracts({ silent: true }), loadDashboard({ silent: true })]);
       setStatus('Ticket assignment and payment details updated.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -922,7 +964,7 @@ function App() {
       setTicketLogs((current) => current.map((ticketLog) => (
         ticketLog.id === log.id ? { ...ticketLog, payment_status: previousStatus } : ticketLog
       )));
-      setStatus(cleanMessage(error));
+      reportError(error);
     } finally {
       setUpdatingPaymentIds((current) => current.filter((id) => id !== log.id));
     }
@@ -967,7 +1009,7 @@ function App() {
       await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
       setStatus(editing ? 'Contract updated.' : 'Contract created.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -980,7 +1022,7 @@ function App() {
       await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
       setStatus('Contract deleted.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1031,7 +1073,7 @@ function App() {
       await Promise.all([loadTicketHistory(), loadBins({ silent: true }), loadContracts({ silent: true }), loadDashboard({ silent: true })]);
       setStatus('Ticket log deleted.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1051,7 +1093,7 @@ function App() {
       setBins(data.bins || []);
     } catch (error) {
       if (!options.silent) {
-        setStatus(cleanMessage(error));
+        reportError(error);
       }
     } finally {
       if (!options.silent) {
@@ -1076,7 +1118,7 @@ function App() {
       setDrivers(data.drivers || []);
     } catch (error) {
       if (!options.silent) {
-        setStatus(cleanMessage(error));
+        reportError(error);
       }
     } finally {
       if (!options.silent) {
@@ -1104,7 +1146,7 @@ function App() {
       await Promise.all([loadContracts(), loadDashboard({ silent: true })]);
       setStatus('Contract archived.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1124,7 +1166,7 @@ function App() {
       setLocations(data.locations || []);
     } catch (error) {
       if (!options.silent) {
-        setStatus(cleanMessage(error));
+        reportError(error);
       }
     } finally {
       if (!options.silent) {
@@ -1153,7 +1195,7 @@ function App() {
       await Promise.all([loadDrivers(), loadDropdowns({ silent: true })]);
       setStatus('Driver added.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1170,7 +1212,7 @@ function App() {
       await Promise.all([loadDrivers(), loadDropdowns({ silent: true })]);
       setStatus('Driver removed.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1194,7 +1236,7 @@ function App() {
       await Promise.all([loadLocations(), loadDropdowns({ silent: true })]);
       setStatus('Location added.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1211,7 +1253,7 @@ function App() {
       await Promise.all([loadLocations(), loadDropdowns({ silent: true })]);
       setStatus('Location removed.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1260,7 +1302,7 @@ function App() {
       await Promise.all([loadBins(), loadDropdowns({ silent: true }), loadDashboard({ silent: true })]);
       setStatus(isEditing ? 'Bin updated.' : 'Bin created.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1283,7 +1325,7 @@ function App() {
       await Promise.all([loadBins(), loadDropdowns({ silent: true }), loadDashboard({ silent: true })]);
       setStatus('Bin deleted.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1331,7 +1373,7 @@ function App() {
         ? 'Inventory transaction saved. Bin balance was capped at its capacity.'
         : 'Inventory transaction saved.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1354,7 +1396,7 @@ function App() {
       await Promise.all([loadBins(), loadTicketHistory({ silent: true }), loadDashboard({ silent: true })]);
       setStatus('Inventory transaction deleted.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     }
   }
 
@@ -1378,6 +1420,7 @@ function App() {
   }
 
   function resetForNextTicket() {
+    setOcrConsent(false);
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
     }
@@ -1401,8 +1444,8 @@ function App() {
     setStatus('Choose or take a photo to begin.');
   }
 
-  function handleFileChange(event) {
-    const file = event.target.files?.[0];
+  function setTicketPhoto(file) {
+    setOcrConsent(false);
     setSelectedFile(file || null);
     setDuplicate(null);
     setIsSuccess(false);
@@ -1479,6 +1522,10 @@ function App() {
   }
 
   async function extractTicket() {
+    if (!ocrConsent) {
+      setStatus('Please confirm photo processing before scanning, or enter the ticket details manually.');
+      return;
+    }
     if (!selectedFile) {
       setStatus('Please choose or take a ticket photo first.');
       return;
@@ -1491,7 +1538,7 @@ function App() {
     const formData = new FormData();
 
     try {
-      const uploadFile = await convertImageToJpeg(selectedFile);
+      const uploadFile = await withDeadline(() => convertImageToJpeg(selectedFile), 20000);
       formData.append('ticketImage', uploadFile);
       setStatus('Reading ticket image...');
 
@@ -1504,7 +1551,7 @@ function App() {
         throw new Error(await readErrorResponse(response));
       }
 
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
 
       setTicket((current) => ({
         ...emptyTicket(),
@@ -1515,7 +1562,7 @@ function App() {
       setDuplicate(data.duplicate);
       setStatus('Extraction complete. Review every field before submitting.');
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     } finally {
       setIsExtracting(false);
     }
@@ -1528,7 +1575,16 @@ function App() {
   }
 
   async function submitReviewedTicket(overageResolution = null) {
-    if (isSubmitting) {
+    if (ticketSubmittingRef.current) {
+      return;
+    }
+    const missing = missingTicketFields(ticket);
+    if (missing.length) {
+      setStatus(`Complete these ticket fields: ${missing.map(field => fieldLabels[field]).join(', ')}.`);
+      return;
+    }
+    if (parseTicketBushels(ticket.bushels) <= 0) {
+      setStatus('Enter a bushel amount greater than zero.');
       return;
     }
 
@@ -1538,7 +1594,7 @@ function App() {
     }
 
     const selectedBin = bins.find((bin) => bin.bin_name.toLowerCase() === ticket.hauled_from.trim().toLowerCase());
-    const exceedsEstimate = selectedBin && Number(ticket.bushels) > Number(selectedBin.current_bushels);
+    const exceedsEstimate = selectedBin && parseTicketBushels(ticket.bushels) > Number(selectedBin.current_bushels);
     let allowBinOverdraw = false;
 
     if (exceedsEstimate) {
@@ -1550,8 +1606,8 @@ function App() {
       }
     }
 
-    const ticketBushels = Number(ticket.bushels) || 0;
-    const selectedContract = contracts.find((contract) => contract.id === scannerAssignment.contractId);
+    const ticketBushels = parseTicketBushels(ticket.bushels);
+    const selectedContract = scannerContracts.find((contract) => contract.id === scannerAssignment.contractId);
     let assignment = {
       assignment_status: 'Spot',
       assignments: [{
@@ -1614,26 +1670,29 @@ function App() {
       }
     }
 
+    ticketSubmittingRef.current = true;
     setIsSubmitting(true);
     setIsSuccess(false);
     setStatus('Submitting reviewed data...');
 
     try {
-      const sendTicket = (confirmedOverdraw) => apiFetch('/api/submit-ticket', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const actor = sessionRef.current?.user?.id;
+      if (!actor) throw new Error('Please log in to continue.');
+      // Keep one durable intent until a confirmed save, including lost responses.
+      const requestId = pendingTicketRequest(localStorage, actor);
+      await requireAtomicTicketWrites(apiFetch, requestId);
+      const sendTicket = (confirmedOverdraw) => postTicketForActor(apiFetch, () => sessionRef.current?.user?.id, actor, {
+          request_id: requestId,
           ticket: {
             ...ticket,
             ...assignment
           },
           allow_bin_overdraw: confirmedOverdraw
-        })
       });
       let response = await sendTicket(allowBinOverdraw);
 
       if (response.status === 409 && !allowBinOverdraw) {
-        const errorData = await response.json();
+        const errorData = await readJsonWithTimeout(response.clone()).catch(() => ({}));
 
         if (errorData.code === 'BIN_INVENTORY_OVERDRAW') {
           allowBinOverdraw = window.confirm('This ticket exceeds estimated bin inventory. Continue and set this bin to 0?');
@@ -1651,7 +1710,11 @@ function App() {
         throw new Error(await readErrorResponse(response));
       }
 
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
+      confirmedTicketReceipt(data);
+      completeTicketRequest(localStorage, actor, requestId);
+      if (sessionRef.current?.user?.id !== actor) return;
+      setRequestError('');
 
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
@@ -1674,21 +1737,56 @@ function App() {
       });
       setDuplicate(null);
       setIsSuccess(true);
-      setStatus(data.message || 'Ticket submitted successfully');
+      setStatus('Ticket submitted successfully');
       loadDropdowns({ silent: true });
+      loadScannerContracts({ silent: true });
       if (isAdmin) {
         loadTicketHistory({ silent: true });
         loadContracts({ silent: true });
         loadBins({ silent: true });
         loadDashboard({ silent: true });
-      } else {
-        loadScannerContracts({ silent: true });
       }
     } catch (error) {
-      setStatus(cleanMessage(error));
+      reportError(error);
     } finally {
+      ticketSubmittingRef.current = false;
       setIsSubmitting(false);
     }
+  }
+
+  async function checkPreviousSubmission() {
+    if (ticketSubmittingRef.current) return;
+    const actor = sessionRef.current?.user?.id;
+    if (!actor) return;
+    ticketSubmittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const requestId = pendingTicketRequest(localStorage, actor);
+      const response = await apiFetch(`/api/ticket-submissions/${requestId}`, { timeoutMs: 20000 });
+      if (!response.ok) throw new Error(await readErrorResponse(response));
+      const data = await readJsonWithTimeout(response);
+      if (sessionRef.current?.user?.id !== actor) return;
+      if (!['committed', 'deleted'].includes(data.status) || !data.ticket?.id) {
+        setStatus('No saved submission was found for this attempt. Retry the original ticket; do not start a second copy.');
+        return;
+      }
+      const saved = data.ticket;
+      const description = `Ticket ${saved.ticket_number}: ${saved.bushels} bushels to ${saved.delivered_to}.`;
+      if (window.confirm(`${description}\n${data.status === 'deleted' ? 'It was saved and later deleted.' : 'It is already saved.'}\nClear this review before starting a different ticket?`)) {
+        completeTicketRequest(localStorage, actor, requestId);
+        setTicket(emptyTicket());
+        setScannerAssignment({ status: 'Spot', contractId: '' });
+        setContractOverage(null);
+        setSelectedFile(null);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl('');
+        setOtherValues({ delivered_to: '', hauled_by: '', hauled_from: '' });
+        setOtherSelections({ delivered_to: false, hauled_by: false, hauled_from: false });
+        setDuplicate(null);
+        setStatus('Previous submission confirmed. You can now review a different ticket.');
+      }
+    } catch (error) { reportError(error); }
+    finally { ticketSubmittingRef.current = false; setIsSubmitting(false); }
   }
 
   function submitContractOverage() {
@@ -1699,7 +1797,7 @@ function App() {
       return;
     }
 
-    const overageContract = contracts.find((contract) => contract.id === contractOverage.contractIdForOverage);
+    const overageContract = scannerContracts.find((contract) => contract.id === contractOverage.contractIdForOverage);
     if (
       contractOverage.destination === 'Contract'
       && overageContract
@@ -1729,10 +1827,10 @@ function App() {
           <option value={OTHER_VALUE}>Other</option>
         </select>
         {options.length === 0 && field === 'hauled_by' && (
-          <small className="field-help">Admins can add saved drivers under Locations, Users, and Drivers, or choose Other to type a name.</small>
+          <small className="field-help">Choose Other to enter a driver not saved by your farm.</small>
         )}
         {options.length === 0 && field === 'delivered_to' && (
-          <small className="field-help">Admins can add saved delivery locations under Locations, Users, and Drivers, or choose Other to type a name.</small>
+          <small className="field-help">Choose Other to enter a delivery location not saved by your farm.</small>
         )}
         {options.length === 0 && field === 'hauled_from' && (
           <small className="field-help">Create bins in Grain Bins to fill this dropdown.</small>
@@ -1777,11 +1875,15 @@ function App() {
           <p>Scan tickets, manage corn and soybean inventory, track contracts, and keep your farm records together.</p>
         </section>
 
-        <form className="auth-card" onSubmit={submitAuth}>
+        <section className="auth-card">
           <div className="auth-tabs">
             <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Log In</button>
-            <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Create Farm Account</button>
+            <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Create Farm</button>
+            {invitationsAvailable && <button type="button" className={authMode === 'join' ? 'active' : ''} onClick={() => setAuthMode('join')}>Join Farm</button>}
           </div>
+          {authMode === 'join' ? <JoinFarm apiBase={API_BASE} onLogin={message => { setAuthMode('login'); setAuthStatus(message); }} onSession={data => {
+            storeSession(data); sessionRef.current = data; terminalAuthFailureRef.current = false; setSession(data);
+          }} /> : <form onSubmit={submitAuth}>
           <div className="form-heading">
             <h2>{authMode === 'signup' ? 'Start a farm account' : 'Welcome back'}</h2>
             <p>{authMode === 'signup' ? 'Create the administrator account for your farm.' : 'Use your farm account to continue.'}</p>
@@ -1804,7 +1906,10 @@ function App() {
             {isAuthenticating ? 'Please wait...' : authMode === 'signup' ? 'Create Farm Account' : 'Log In'}
           </button>
           {authStatus && <div className="notice">{authStatus}</div>}
-        </form>
+          {authStatus && getStoredSession()?.refresh_token && <button type="button" disabled={isAuthenticating} onClick={() => { setIsAuthReady(false); setAuthAttempt(value => value + 1); }}>Reconnect Session</button>}
+          </form>}
+          <div className="settings-links"><a href="https://getbinflow.com/privacy/" target="_blank" rel="noreferrer">Privacy Policy</a><a href="https://getbinflow.com/support/" target="_blank" rel="noreferrer">Support</a></div>
+        </section>
       </main>
     );
   }
@@ -1818,6 +1923,7 @@ function App() {
             <span>BinFlow</span>
           </div>
           <h2>Loading your farm workspace...</h2>
+          {requestError && <><p role="alert">{requestError}</p><button type="button" onClick={() => { setRequestError(''); loadFarmSession(); }}>Try Again</button><button type="button" onClick={logout}>Log Out</button></>}
         </section>
       </main>
     );
@@ -1836,6 +1942,7 @@ function App() {
             <span>{account.display_name || session.user?.email}</span>
             <small className="account-role">{isAdmin ? 'Administrator' : 'Employee scanner'}</small>
           </div>
+          {isEmployee && <button type="button" className="account-settings-button" aria-current={SETTINGS_SCREENS.includes(activeView) ? 'page' : undefined} onClick={() => setActiveView(activeView === 'scanner' ? 'settings' : 'scanner')}>{activeView === 'scanner' ? 'Settings' : 'Scan'}</button>}
           <button type="button" onClick={logout}>Log Out</button>
         </div>
       </section>
@@ -1844,13 +1951,14 @@ function App() {
         <button
           className={activeView === 'dashboard' ? 'active' : ''}
           aria-current={activeView === 'dashboard' ? 'page' : undefined}
+          aria-label="Dashboard"
           type="button"
           onClick={() => {
             setActiveView('dashboard');
             loadDashboard();
           }}
         >
-          Dashboard
+          Home
         </button>
         <button
           className={activeView === 'scanner' ? 'active' : ''}
@@ -1894,19 +2002,38 @@ function App() {
           Contracts
         </button>
         <button
-          className={activeView === 'users' ? 'active' : ''}
-          aria-current={activeView === 'users' ? 'page' : undefined}
+          className={SETTINGS_SCREENS.includes(activeView) ? 'active' : ''}
+          aria-current={SETTINGS_SCREENS.includes(activeView) ? 'page' : undefined}
           type="button"
           onClick={() => {
-            setActiveView('users');
-            loadFarmUsers();
-            loadDrivers();
-            loadLocations();
+            setActiveView('settings');
           }}
         >
-          Locations, Users, and Drivers
+          Settings
         </button>
       </nav>}
+
+      {!online && <p role="status" className="notice app-notice">You are offline. Reconnect before scanning or saving changes.</p>}
+
+      {requestError && activeView !== 'scanner' && <div role="alert" className="notice app-notice">{requestError}<button type="button" aria-label="Dismiss notification" onClick={() => setRequestError('')}>Dismiss</button></div>}
+
+      {activeView === 'settings' && <SettingsHome role={account.role} onOpen={view => {
+        if (!canOpenView(account.role, view)) return;
+        setActiveView(view);
+        if (view === 'team') loadFarmUsers();
+      }} />}
+      {isAdmin && ['locations', 'drivers'].includes(activeView) && <SavedNamesSettings
+        key={activeView} kind={activeView} apiFetch={apiFetch}
+        onBack={() => setActiveView('settings')}
+        onChanged={() => loadDropdowns({ silent: true })}
+      />}
+      {activeView === 'account' && <AccountSettings
+        account={{ ...account, email: session.user?.email || account.email }}
+        farm={farm}
+        apiFetch={apiFetch}
+        onDeleted={finishAccountDeletion}
+        onBack={() => setActiveView('settings')}
+      />}
 
       {isAdmin && activeView === 'dashboard' && (
         <section className="dashboard-view">
@@ -1914,7 +2041,6 @@ function App() {
             <div>
               <p className="eyebrow">Good to see you, {account.display_name?.split(' ')[0] || 'there'}</p>
               <h2>{farm?.name || 'Your farm'}</h2>
-              <p><span className="system-status-dot" /> All systems normal</p>
             </div>
             <div className="quick-actions">
               <button className="scan-action" type="button" onClick={() => setActiveView('scanner')}>Scan New Ticket</button>
@@ -2663,15 +2789,17 @@ function App() {
         </section>
       )}
 
-      {isAdmin && activeView === 'users' && (
+      {isAdmin && activeView === 'team' && (
         <section className="users-panel">
           <div className="form-heading">
-            <h2>Locations, Users, and Drivers</h2>
-            <p>Manage farm access, saved delivery locations, and driver names available while scanning tickets.</p>
+            <button className="settings-back" type="button" onClick={() => setActiveView('settings')}>Back to Settings</button>
+            <h2>Team Members</h2>
           </div>
           {userStatus && <div className="notice">{userStatus}</div>}
 
+          <FarmInvitationSettings apiFetch={apiFetch} available={invitationsAvailable} />
           <div className="user-management-grid">
+            {!invitationsAvailable && <details className="legacy-user-access"><summary>Add a user with a temporary password</summary>
             <form className="employee-form" onSubmit={createFarmUser}>
               <div className="form-heading compact-heading">
                 <h3>Add Farm User</h3>
@@ -2717,13 +2845,7 @@ function App() {
               <button className="primary-button" type="submit" disabled={isCreatingEmployee}>
                 {isCreatingEmployee ? 'Creating User...' : `Create ${employeeForm.role === 'admin' ? 'Administrator' : 'Employee'} Login`}
               </button>
-              <button className="secondary-button" type="button" onClick={repairEmployee} disabled={isCreatingEmployee}>
-                Repair Existing Employee Login
-              </button>
-              <small className="field-help">
-                Use repair if an employee login accidentally opened as its own farm administrator.
-              </small>
-            </form>
+            </form></details>}
 
             <div className="farm-user-list">
               <div className="section-title-row">
@@ -2746,11 +2868,11 @@ function App() {
                     </div>
                     <div className="farm-user-role-actions">
                       <span className={`role-badge ${user.role}`}>{user.role}</span>
-                      {user.role === 'employee' && (
-                        <button type="button" onClick={() => promoteUser(user)}>
-                          Promote to Admin
-                        </button>
-                      )}
+                      <button type="button" disabled={Boolean(changingMember) || (user.role === 'admin' && farmUsers.filter(member => member.role === 'admin').length <= 1)}
+                        title={user.role === 'admin' && farmUsers.filter(member => member.role === 'admin').length <= 1 ? 'The farm must keep at least one Administrator' : undefined}
+                        onClick={() => changeUserRole(user, user.role === 'admin' ? 'employee' : 'admin')}>
+                        {changingMember === user.user_id ? 'Updating...' : user.role === 'employee' ? 'Promote to Admin' : 'Make Employee'}
+                      </button>
                     </div>
                   </article>
                 ))
@@ -2758,63 +2880,6 @@ function App() {
             </div>
           </div>
 
-          <section className="driver-panel">
-            <div className="form-heading compact-heading">
-              <h3>Delivery Locations</h3>
-              <p>Add or remove locations shown in the scanner’s Delivered To dropdown.</p>
-            </div>
-            <form className="quick-add-form" onSubmit={createLocation}>
-              <input
-                type="text"
-                value={newLocationName}
-                onChange={(event) => setNewLocationName(event.target.value)}
-                placeholder="Location or buyer name"
-              />
-              <button type="submit">Add Location</button>
-            </form>
-            {isLoadingLocations && <div className="notice">Loading locations...</div>}
-            {locations.length === 0 && !isLoadingLocations ? (
-              <div className="premium-empty">No saved locations yet. Scanner users can still choose Other and type a destination.</div>
-            ) : (
-              <div className="chip-list">
-                {locations.map((location) => (
-                  <div className="data-chip" key={location.id}>
-                    <span>{location.name}</span>
-                    <button type="button" onClick={() => removeLocation(location.id)}>Remove</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="driver-panel">
-            <div className="form-heading compact-heading">
-              <h3>Drivers</h3>
-              <p>Add or remove names shown in the scanner’s Hauled By dropdown.</p>
-            </div>
-            <form className="quick-add-form" onSubmit={createDriver}>
-              <input
-                type="text"
-                value={newDriverName}
-                onChange={(event) => setNewDriverName(event.target.value)}
-                placeholder="Driver name"
-              />
-              <button type="submit">Add Driver</button>
-            </form>
-            {isLoadingDrivers && <div className="notice">Loading drivers...</div>}
-            {drivers.length === 0 && !isLoadingDrivers ? (
-              <div className="premium-empty">No saved drivers yet. Scanner users can still choose Other and type a name.</div>
-            ) : (
-              <div className="chip-list">
-                {drivers.map((driver) => (
-                  <div className="data-chip" key={driver.id}>
-                    <span>{driver.name}</span>
-                    <button type="button" onClick={() => removeDriver(driver.id)}>Remove</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
         </section>
       )}
 
@@ -2831,30 +2896,25 @@ function App() {
       )}
 
       <section className="capture-panel">
-        <label className="upload-target">
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleFileChange}
-            disabled={isExtracting || isSubmitting}
-          />
-          {previewUrl ? (
-            <img src={previewUrl} alt="Selected grain ticket preview" />
-          ) : (
-            <span>Tap to take or upload a ticket photo</span>
-          )}
-        </label>
+        <TicketPhotoCapture key={account.user_id} previewUrl={previewUrl} onPhoto={setTicketPhoto} disabled={isExtracting || isSubmitting} />
 
-        <button className="primary-button" onClick={extractTicket} disabled={isExtracting || isSubmitting || !selectedFile}>
+        {selectedFile && <div className="ocr-consent">
+          <label className="confirmation-check"><input type="checkbox" checked={ocrConsent} disabled={isExtracting || isSubmitting} onChange={event => setOcrConsent(event.target.checked)} />Allow this photo to be sent to OpenAI for ticket reading.</label>
+          <p>Photos may contain names and farm information. Manual entry is available. <a href="https://getbinflow.com/privacy/" target="_blank" rel="noreferrer">Privacy Policy</a></p>
+        </div>}
+        <button className="primary-button" onClick={extractTicket} disabled={isExtracting || isSubmitting || !selectedFile || !ocrConsent}>
           {isExtracting ? 'Scanning Ticket...' : 'Extract Ticket Data'}
         </button>
 
-        <p className="status-text">{status}</p>
+        <p className="status-text" role="status">{status}</p>
+        <button type="button" className="text-button" onClick={checkPreviousSubmission} disabled={isSubmitting || isExtracting}>Check Previous Submission</button>
 
         {isLoadingDropdowns && (
-          <div className="notice">Loading shared bins, locations, and drivers...</div>
+          <p className="scanner-data-status" role="status">Loading bins, locations, and drivers...</p>
         )}
+        {dropdownError && <div className="notice" role="alert"><p>Could not refresh farm choices. {dropdownError}</p><button type="button" onClick={loadDropdowns}>Retry Farm Choices</button></div>}
+        {isLoadingScannerContracts && <p className="scanner-data-status" role="status">Loading contracts...</p>}
+        {scannerContractsError && <div className="notice" role="alert"><p>Could not refresh contracts. {scannerContractsError}</p><button type="button" onClick={loadScannerContracts}>Retry Contracts</button></div>}
 
         {dropdowns.missing_tabs.length > 0 && (
           <div className="notice warning">
