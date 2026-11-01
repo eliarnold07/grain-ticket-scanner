@@ -896,7 +896,9 @@ footer {
   }
 
   h1 {
-    font-size: clamp(3.1rem, 17vw, 4.8rem);
+    font-size: clamp(2.5rem, 11vw, 3.5rem);
+    line-height: 1.04;
+    max-width: none;
   }
 
   .logo-row {

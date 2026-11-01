@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'">
+  <meta name="description" content="Explore the real BinFlow interface with fictional farm data: grain tickets, bins, contracts, payment records, and Settings.">
+  <link rel="canonical" href="https://getbinflow.com/demo/">
+  <link rel="icon" href="/landing-concept/binflow-mark.png">
+  <title>Try BinFlow | Interactive Farm Demo</title>
+  <style>
+    .demo-notice{background:#123f2c;color:white;padding:12px 20px;font:14px/1.5 system-ui;text-align:center}
+    .demo-notice a{color:#ffe0a0;margin-left:14px}.demo-notice details{max-width:850px;margin:auto}.demo-notice summary{cursor:pointer}
+    .brand-lockup img{width:2.55rem;height:2.55rem;object-fit:contain}
+  </style>
+</head>
+<body>
+  <aside class="demo-notice" aria-label="Demo information"><strong>BinFlow demo · Fictional farm data · Changes reset on refresh</strong><a href="/app/?auth=signup">Create Farm Account</a>
+    <details><summary>About this demo</summary>The screens and controls come from the BinFlow app. Explore records, filters, CSV export, bins, contracts, and Settings. Photo extraction returns a sample ticket; it does not read or upload your image. Invitations are examples only. No emails are sent, no payments are processed, and no real accounts can be changed or deleted. <a href="mailto:eli@getbinflow.com">Contact Eli</a></details>
+  </aside>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx?demo"></script>
+</body>
+</html>
