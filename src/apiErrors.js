@@ -7,6 +7,8 @@ const messages = new Set([
   'Could not prepare this photo for upload.', 'Could not read the selected photo.'
 ]);
 const codes = Object.freeze({
+  SUBSCRIPTION_REQUIRED: 'Your farm needs an active subscription. Open Farm subscription to restore access.',
+  ENTITLEMENT_UNAVAILABLE: 'Farm access could not be verified. Please try again. Your data is safe.',
   INVITATION_INVALID: 'That farm code is not valid. Check it with your farm Administrator.',
   INVITATION_EXPIRED: 'This invitation expired or was replaced. Enter the current farm code again.',
   INVITATION_RATE_LIMITED: 'Too many code attempts. Wait 15 minutes before trying again.',

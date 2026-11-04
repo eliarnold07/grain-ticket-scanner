@@ -1,8 +1,8 @@
-export const SETTINGS_SCREENS = Object.freeze(['settings', 'account', 'locations', 'team', 'drivers']);
+export const SETTINGS_SCREENS = Object.freeze(['settings', 'account', 'billing', 'locations', 'team', 'drivers']);
 export const FARM_SETTINGS_SCREENS = Object.freeze(['locations', 'team', 'drivers']);
 
 export function canOpenView(role, view) {
-  return role === 'admin' || (role === 'employee' && ['scanner', 'settings', 'account'].includes(view));
+  return role === 'admin' || (role === 'employee' && ['scanner', 'settings', 'account', 'billing'].includes(view));
 }
 
 // Subscriptions will be supplied by the server's farm entitlement/billing portal,

@@ -1,3 +1,4 @@
+import { getFarmEntitlement } from './entitlementService.js';
 import {
   getWeeklySummaryDelivery,
   getWeeklySummaryFarmData,
@@ -57,6 +58,8 @@ export async function sendWeeklySummaries(now = new Date()) {
   const results = [];
 
   for (const farm of farms) {
+    const access = await getFarmEntitlement(farm.id);
+    if (access.enforcement_mode === 'enforced' && !access.has_access) { results.push({ farmId: farm.id, status: 'subscription_required' }); continue; }
     const delivered = await getWeeklySummaryDelivery(farm.id, periodEnd);
     if (delivered) {
       results.push({ farmId: farm.id, status: 'already-recorded' });

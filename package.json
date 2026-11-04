@@ -27,7 +27,10 @@
     "cap:sync": "npm run build:mobile && cap sync",
     "cap:sync:ios": "npm run build:mobile && cap sync ios",
     "cap:open:ios": "cap open ios",
-    "test": "node --test"
+    "test": "node --test",
+    "billing:reconcile": "node scripts/billing-reconcile.mjs",
+    "test:billing": "node --test test/billing.test.js",
+    "check:billing-concurrency": "node scripts/check-billing-concurrency.mjs"
   },
   "dependencies": {
     "@capacitor/camera": "^7.0.5",
@@ -39,14 +42,15 @@
     "multer": "^2.4.0",
     "openai": "^5.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "stripe": "23.1.0",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",
     "@electric-sql/pglite": "^0.5.10",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.5",
-    "pg": "^8.23.1",
     "vite": "^7.3.7"
   }
 }
