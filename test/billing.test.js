@@ -185,6 +185,11 @@ test('actual HTTP guards deny unpaid APIs, preserve recovery and verify Stripe r
   const signature=stripe.webhooks.generateTestHeaderString({payload,secret});
   assert.equal((await fetch(base+'/api/billing/webhook',{method:'POST',headers:{'content-type':'application/json','stripe-signature':signature},body:payload})).status,200);
   assert.equal((await fetch(base+'/api/billing/webhook',{method:'POST',headers:{'content-type':'application/json','stripe-signature':signature},body:payload+' '})).status,400);
+  const livePayload=JSON.stringify({id:'evt_live_fixture',type:'invoice.paid',livemode:true,data:{object:{}}});
+  const liveSignature=stripe.webhooks.generateTestHeaderString({payload:livePayload,secret});
+  const liveResponse=await fetch(base+'/api/billing/webhook',{method:'POST',headers:{'content-type':'application/json','stripe-signature':liveSignature},body:livePayload});
+  assert.equal(liveResponse.status,400);
+  assert.equal((await liveResponse.json()).code,'TEST_MODE_REQUIRED');
   assert.equal(processed,1);
 });
 

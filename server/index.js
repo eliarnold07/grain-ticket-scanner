@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { billingConfig, billingEnvironment, BILLING_STAGING_ORIGIN } from './billing/config.js';
 import { withBillingDeletion } from './billing/accountDeletion.js';
 import { registerBillingWebhook, registerBillingRoutes } from './billing/routes.js';
 import multer from 'multer';
@@ -75,7 +76,9 @@ const configuredOrigins = String(process.env.CORS_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-const allowedOrigins = new Set([
+const stagingBilling = billingEnvironment() === 'staging';
+if (stagingBilling) billingConfig();
+const allowedOrigins = new Set(stagingBilling ? [BILLING_STAGING_ORIGIN] : [
   ...configuredOrigins,
   'https://getbinflow.com',
   'https://www.getbinflow.com',
