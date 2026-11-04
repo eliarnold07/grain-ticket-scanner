@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { withBillingDeletion } from './billing/accountDeletion.js';
+import { registerBillingWebhook, registerBillingRoutes } from './billing/routes.js';
 import multer from 'multer';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
@@ -121,6 +123,7 @@ app.use(cors({
     callback(error);
   }
 }));
+registerBillingWebhook(app);
 app.use('/api',releaseWriteGuard);
 app.use(express.json({ limit: '2mb' }));
 app.param('id', (_req, res, next, id) => {
@@ -131,6 +134,7 @@ app.use('/api', requireSupabaseAuth);
 app.use('/api', requireFarmEntitlement);
 
 app.use('/api', farmPermissionGuard(currentAccount));
+registerBillingRoutes(app, { account: currentAccount });
 
 registerFarmInvitationRoutes(app, {
   rpc: farmFeatureRpc, authenticate: authenticateJoinRequest,
@@ -372,13 +376,13 @@ app.get('/api/session', async (_req, res) => {
   res.json({
     farm,
     account: currentAccount(),
-    entitlement: await getFarmEntitlement(farm?.id)
+    entitlement: await getFarmEntitlement(farm?.id).catch(() => ({ enforcement_mode: 'enforced', has_access: false, reason: 'verification_required', status: 'unavailable' }))
   });
 });
 
 app.use('/api', accountDeletionRouter({
   preview: getAccountDeletionPreview,
-  remove: deleteCurrentAccount,
+  remove: withBillingDeletion(deleteCurrentAccount, currentFarm),
   report: (code) => console.error('Account request failed:', code)
 }));
 

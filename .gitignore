@@ -13,3 +13,7 @@ google-service-account.json
 *-service-account*.json
 .DS_Store
 npm-debug.log*
+
+# Local billing tooling; no database state or credentials in Git.
+.billing-supabase/
+supabase/.temp/
