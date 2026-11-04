@@ -77,6 +77,8 @@ export function billingConfig(env = process.env) {
   if (env.STRIPE_ANNUAL_PRICE_ID && !/^price_[A-Za-z0-9_]+$/.test(env.STRIPE_ANNUAL_PRICE_ID)) throw new Error('Invalid Stripe annual price ID');
   const trialDays = Number(env.BILLING_TRIAL_DAYS || 30);
   if (!Number.isInteger(trialDays) || trialDays < 1 || trialDays > 90) throw new Error('Invalid trial length');
-  return { mode, databaseUrl: database.href, secret: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+  const iosHandoff = env.BILLING_IOS_HANDOFF_ENABLED ?? 'false';
+  if (!['true', 'false'].includes(iosHandoff)) throw new Error('Invalid BILLING_IOS_HANDOFF_ENABLED');
+  return { iosHandoff: iosHandoff === 'true', mode, databaseUrl: database.href, secret: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET,
     priceId: env.STRIPE_PRICE_ID, annualPriceId: env.STRIPE_ANNUAL_PRICE_ID, identitySecret: env.BILLING_TRIAL_IDENTITY_SECRET, trialDays, appUrl: appUrl.href };
 }

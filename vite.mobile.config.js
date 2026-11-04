@@ -12,9 +12,14 @@ function capacitorAppEntry() {
       const rootHtmlPath = resolve('dist-mobile/index.html');
       const appHtml = await readFile(appHtmlPath, 'utf8');
 
-      await writeFile(rootHtmlPath, appHtml.replaceAll('../', './'));
+      const assets = resolve('dist-mobile/assets');
+      await mkdir(assets, { recursive: true });
+      await copyFile(resolve('public/landing-concept/binflow-mark.png'), resolve(assets, 'binflow-icon.png'));
+      const packagedHtml = appHtml
+        .replaceAll('../', './')
+        .replaceAll('/landing-concept/binflow-mark.png', './assets/binflow-icon.png');
+      await writeFile(rootHtmlPath, packagedHtml);
       await rm(resolve('dist-mobile/app'), { recursive: true, force: true });
-      await mkdir(resolve('dist-mobile/assets'), { recursive: true });
       await copyFile(resolve('public/robots.txt'), resolve('dist-mobile/robots.txt')).catch(() => {});
     }
   };

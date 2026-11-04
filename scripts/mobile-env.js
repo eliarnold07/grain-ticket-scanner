@@ -2,7 +2,12 @@ import { loadEnv } from 'vite';
 
 export const PRODUCTION_API_URL = 'https://api.getbinflow.com';
 export const PRODUCTION_SUPABASE_URL = 'https://oxqsianyivqevtwzhdnq.supabase.co';
-const productionRef = new URL(PRODUCTION_SUPABASE_URL).hostname.split('.')[0];
+export const STAGING_API_URL = 'https://binflow-api-staging.onrender.com';
+export const STAGING_SUPABASE_URL = 'https://vstdydmykzzwbyvlpesk.supabase.co';
+const targets = {
+  mobile: { apiUrl: PRODUCTION_API_URL, supabaseUrl: PRODUCTION_SUPABASE_URL, label: 'production' },
+  'mobile-staging': { apiUrl: STAGING_API_URL, supabaseUrl: STAGING_SUPABASE_URL, label: 'staging' }
+};
 
 function jwtClaims(value) {
   if (!/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) return null;
@@ -10,22 +15,24 @@ function jwtClaims(value) {
   catch { return null; }
 }
 
-export function validateMobileEnv(env, now = Date.now()) {
+export function validateMobileEnv(env, now = Date.now(), mode = 'mobile') {
+  const target = targets[mode];
+  if (!target) throw new Error('Use Vite mode mobile or mobile-staging for the Capacitor build.');
   const required = ['VITE_API_URL', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
   const missing = required.filter((name) => !env[name]);
   if (missing.length) {
-    throw new Error(`Mobile build configuration missing: ${missing.join(', ')}. Configure the ignored .env.mobile.local in the repository root; see docs/ios-environment-fix.md.`);
+    throw new Error(`Mobile build configuration missing: ${missing.join(', ')}. Configure the ignored .env.${mode}.local in the repository root.`);
   }
-  if (env.VITE_API_URL !== PRODUCTION_API_URL) throw new Error('VITE_API_URL must be the production BinFlow API origin. Local/staging URLs are not allowed in this iOS build.');
-  if (env.VITE_SUPABASE_URL !== PRODUCTION_SUPABASE_URL) throw new Error('VITE_SUPABASE_URL must be the existing production Supabase project URL. Local/staging projects and URL credentials are not allowed.');
+  if (env.VITE_API_URL !== target.apiUrl) throw new Error(`VITE_API_URL must be the ${target.label} BinFlow API origin.`);
+  if (env.VITE_SUPABASE_URL !== target.supabaseUrl) throw new Error(`VITE_SUPABASE_URL must be the ${target.label} Supabase project URL.`);
 
   const key = env.VITE_SUPABASE_ANON_KEY;
   const claims = jwtClaims(key);
   const publishable = /^sb_publishable_[A-Za-z0-9_-]{16,}$/.test(key);
-  const anon = claims?.role === 'anon' && claims.ref === productionRef && claims.iss === 'supabase'
+  const anon = claims?.role === 'anon' && claims.ref === new URL(target.supabaseUrl).hostname.split('.')[0] && claims.iss === 'supabase'
     && Number.isFinite(claims.exp) && claims.exp > now / 1000;
   if (!publishable && !anon) {
-    throw new Error('VITE_SUPABASE_ANON_KEY must be this production project\'s public publishable key or unexpired legacy anon key. Privileged, placeholder, and other-project keys are rejected.');
+    throw new Error('VITE_SUPABASE_ANON_KEY must be this project\'s public publishable key or unexpired legacy anon key. Privileged, placeholder, and other-project keys are rejected.');
   }
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith('VITE_')) continue;
@@ -41,8 +48,8 @@ export function validateMobileEnv(env, now = Date.now()) {
 }
 
 export function loadMobileEnv(root = process.cwd(), mode = 'mobile') {
-  if (mode !== 'mobile') throw new Error('Use npm run build:mobile (Vite mode mobile) for the Capacitor build.');
-  return validateMobileEnv(loadEnv(mode, root, 'VITE_'));
+  if (!Object.hasOwn(targets, mode)) throw new Error('Use Vite mode mobile or mobile-staging for the Capacitor build.');
+  return validateMobileEnv(loadEnv(mode, root, 'VITE_'), Date.now(), mode);
 }
 
 export async function verifyOpaquePublicKey(config, fetcher = fetch) {
@@ -50,9 +57,9 @@ export async function verifyOpaquePublicKey(config, fetcher = fetch) {
   // Opaque publishable keys have no locally inspectable project claim.
   let response;
   try {
-    response = await fetcher(`${PRODUCTION_SUPABASE_URL}/auth/v1/settings`, {
+    response = await fetcher(`${config.supabaseUrl ?? PRODUCTION_SUPABASE_URL}/auth/v1/settings`, {
       headers: { apikey: config.publicKey }, signal: AbortSignal.timeout(15000)
     });
-  } catch { throw new Error('Could not verify the public key against production Supabase. Check your connection and retry. No key values printed.'); }
-  if (!response.ok) throw new Error('Production Supabase did not accept this public key. Configure the production project public key locally. No key values printed.');
+  } catch { throw new Error('Could not verify the public key against the configured Supabase project. Check your connection and retry. No key values printed.'); }
+  if (!response.ok) throw new Error('The configured Supabase project did not accept this public key. Configure its public key locally. No key values printed.');
 }

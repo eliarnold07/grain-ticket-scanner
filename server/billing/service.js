@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 export class BillingError extends Error {
   constructor(code, status = 409) { super(code); this.code = code; this.status = status; }
@@ -101,8 +101,48 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     const annual = config.annualPriceId ? await plan('year').catch(() => null) : null;
     return { ...monthly, annual };
   }
-  async function checkout(farmId, actor, interval = 'month') {
+  const handoffHash = token => createHash('sha256').update(token).digest('hex');
+  async function iosPrice() {
+    const quote = await price();
+    if (quote.currency !== 'usd' || quote.amount !== 2999 || quote.trial_days !== 30 || quote.annual?.amount !== 29999) {
+      throw new BillingError('PLAN_UNAVAILABLE', 409);
+    }
+    return quote;
+  }
+  async function issueIosHandoff(farmId, actor) {
+    await iosPrice();
+    const token = randomBytes(32).toString('base64url');
+    await db.transaction(async tx => {
+      const member = await locked(tx, farmId, actor);
+      if (!member.email_confirmed_at) throw new BillingError('CONFIRMED_EMAIL_REQUIRED', 403);
+      const existing = (await tx.query('select subscription_id,status from private.farm_subscriptions where farm_id=$1', [farmId])).rows[0];
+      if (existing?.subscription_id && !terminal.has(existing.status)) throw new BillingError('USE_BILLING_PORTAL');
+      await tx.query(`insert into private.billing_ios_handoffs(farm_id, actor_id, token_hash, expires_at)
+        values ($1,$2,$3,statement_timestamp()+interval '5 minutes')
+        on conflict (farm_id,actor_id) do update set token_hash=excluded.token_hash,expires_at=excluded.expires_at`,
+      [farmId, actor, handoffHash(token)]);
+    });
+    return { url: `${config.appUrl}?billing=ios-handoff#${token}` };
+  }
+  async function redeemIosHandoff(token, interval) {
     if (!['month', 'year'].includes(interval)) throw new BillingError('INVALID_PLAN', 400);
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new BillingError('HANDOFF_INVALID', 410);
+    const handoff = (await db.query(`delete from private.billing_ios_handoffs
+      where token_hash=$1 and expires_at>statement_timestamp() returning farm_id,actor_id`, [handoffHash(token)])).rows[0];
+    if (!handoff) throw new BillingError('HANDOFF_INVALID', 410);
+    // Checkout rechecks current membership, confirmation and farm state. Only the
+    // token row identifies the actor and farm, even if Safari has another login.
+    await iosPrice();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await checkout(handoff.farm_id, handoff.actor_id, interval, true);
+      if (!result.retry) return result;
+    }
+    throw new BillingError('CHECKOUT_CHANGED');
+  }
+  async function checkout(farmId, actor, interval = 'month', iosHandoff = false) {
+    if (!['month', 'year'].includes(interval)) throw new BillingError('INVALID_PLAN', 400);
+    const successUrl = `${config.appUrl}?billing=${iosHandoff ? 'ios-returned' : 'returned'}`;
+    const cancelUrl = `${config.appUrl}?billing=${iosHandoff ? 'ios-canceled' : 'canceled'}`;
     // Validate before reserving so an unavailable price cannot strand an attempt.
     await plan(interval);
     // Persist the reservation before external calls. Retries use the same key even
@@ -152,7 +192,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
       if (s.checkout_session_id) {
         const session = await stripe.checkout.sessions.retrieve(s.checkout_session_id);
         if (session.status === 'open') {
-          if (reservedInterval === interval) return { url: session.url };
+          if (reservedInterval === interval && (session.success_url === successUrl || (!iosHandoff && !session.success_url))) return { url: session.url };
           // Expiration must succeed before releasing the reservation. If Stripe
           // completed the old session concurrently, no replacement can start.
           await stripe.checkout.sessions.expire(session.id);
@@ -169,7 +209,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
         mode: 'subscription', customer: s.customer_id, client_reference_id: farmId,
         line_items: [{ price: interval === 'year' ? config.annualPriceId : config.priceId, quantity: 1 }], payment_method_collection: 'always',
         subscription_data: { metadata: { binflow_farm_id: farmId }, ...(trial ? { ...(freshTrial ? { trial_period_days: config.trialDays } : { trial_end: trialEnd }), trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } } : {}) },
-        success_url: `${config.appUrl}?billing=returned`, cancel_url: `${config.appUrl}?billing=canceled`,
+        success_url: successUrl, cancel_url: cancelUrl,
         custom_text: { submit: { message: trial ? 'Your saved payment method will be charged automatically when the trial ends. Cancel before that date to avoid the first charge. One subscription covers this farm.' : `This subscription renews ${interval === 'year' ? 'annually' : 'monthly'} until canceled. One subscription covers this farm.` } },
         expires_at: Math.floor(+new Date(s.checkout_started)/1000)+3600
       }, { idempotencyKey: `farm-checkout:${s.checkout_attempt}` });
@@ -235,7 +275,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
       return output;
     });
   }
-  return { entitlement,details,price,checkout,portal,reconcile,webhook,exportFarm,
+  return { issueIosHandoff, redeemIosHandoff, entitlement,details,price,checkout,portal,reconcile,webhook,exportFarm,
     async reconcileAll() {
       const farms=(await db.query('select farm_id from private.farm_subscriptions union select farm_id from private.billing_cancellation_outbox where completed_at is null')).rows;
       const results=[];

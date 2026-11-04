@@ -130,7 +130,7 @@ test('bundle check rejects stale synced iOS assets even when the fresh mobile bu
     await writeFile(join(native,'app.js'),PRODUCTION_API_URL);
     const stale = spawnSync(process.execPath,[script],{cwd:root,env:childEnv,encoding:'utf8'});
     assert.equal(stale.status,1);
-    assert.match(stale.stderr,/Missing configured production Supabase URL/);
+    assert.match(stale.stderr,/Missing configured Supabase URL/);
     assert.ok(!stale.stderr.includes(publicKey));
     await writeFile(join(native,'app.js'),configured);
     const synced = spawnSync(process.execPath,[script],{cwd:root,env:childEnv,encoding:'utf8'});
@@ -154,4 +154,17 @@ test('bundle check detects privileged JWTs without printing the token', async ()
     assert.match(result.stderr,/Non-public JWT/);
     assert.ok(!result.stderr.includes(key));
   } finally { await cleanup(root); }
+});
+
+test('staging iOS packaging requires both staging targets and the staging project key', () => {
+  const staging = {
+    VITE_API_URL: 'https://binflow-api-staging.onrender.com',
+    VITE_SUPABASE_URL: 'https://vstdydmykzzwbyvlpesk.supabase.co',
+    VITE_SUPABASE_ANON_KEY: jwt({ ref: 'vstdydmykzzwbyvlpesk', role: 'anon', iss: 'supabase', exp: 4102444800 })
+  };
+  assert.equal(validateMobileEnv(staging, Date.now(), 'mobile-staging').apiUrl, staging.VITE_API_URL);
+  for (const name of Object.keys(staging)) {
+    assert.throws(() => validateMobileEnv({ ...staging, [name]: valid[name] }, Date.now(), 'mobile-staging'));
+  }
+  assert.throws(() => validateMobileEnv(staging));
 });
