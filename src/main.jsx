@@ -1,3 +1,4 @@
+import BillingSettings, { billingRestricted } from './BillingSettings.jsx';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -244,6 +245,21 @@ function emptyDashboard() {
 
 function App() {
   const [session, setSession] = useState(null);
+  const [entitlement, setEntitlement] = useState(null);
+  const [billingReturn, setBillingReturn] = useState(() => {
+    const value = new URL(window.location.href).searchParams.get('billing');
+    return ['returned','canceled','managed'].includes(value) ? value : null;
+  });
+  function finishBillingReturn(kind) {
+    const url = new URL(window.location.href); url.searchParams.delete('billing');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    setBillingReturn(null);
+    if (kind === 'returned') { setActiveView(isEmployee ? 'scanner' : 'dashboard'); loadDropdowns(); loadScannerContracts(); }
+    else if (kind === 'managed') setActiveView('billing');
+  }
+  const [billingClock, setBillingClock] = useState(Date.now());
+  const subscriptionRestricted = billingRestricted(entitlement, billingClock);
+  useEffect(() => { const id = setInterval(() => setBillingClock(Date.now()), 1000); return () => clearInterval(id); }, []);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const sessionRef = useRef(null);
   const refreshPromiseRef = useRef(null);
@@ -398,6 +414,7 @@ function App() {
         if (!cancelled) {
           sessionRef.current = null;
           setSession(null);
+          setEntitlement(null);
           setAuthStatus(cleanMessage(error));
         }
       } finally {
@@ -420,7 +437,7 @@ function App() {
 
     async function initializeFarmData() {
       const sessionData = await loadFarmSession();
-      if (!sessionData || cancelled) return;
+      if (!sessionData || cancelled || billingRestricted(sessionData.entitlement)) return;
 
       if (sessionData.account?.role === 'employee') {
         setActiveView('scanner');
@@ -444,7 +461,7 @@ function App() {
     }
 
     initializeFarmData();
-    const handleFocus = () => { loadDropdowns(); loadScannerContracts(); };
+    const handleFocus = async () => { const data = await loadFarmSession(); if (data && !billingRestricted(data.entitlement)) { loadDropdowns(); loadScannerContracts(); } };
     const intervalId = window.setInterval(handleFocus, 60000);
 
     window.addEventListener('focus', handleFocus);
@@ -454,7 +471,7 @@ function App() {
       window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [isAuthReady, isAuthenticated]);
+  }, [isAuthReady, isAuthenticated, subscriptionRestricted]);
 
   async function apiFetch(path, options = {}, retry = true) {
     const { timeoutMs = 90000, ...requestOptions } = options;
@@ -477,6 +494,7 @@ function App() {
       throw error;
     }
 
+    if (response.status === 402) { const problem = await response.clone().json().catch(() => ({})); if (problem.entitlement) setEntitlement(problem.entitlement); }
     if (response.status !== 401 || !retry || !activeSession.refresh_token) {
       if (response.status === 401) endInvalidSession();
       return response;
@@ -535,6 +553,7 @@ function App() {
     sessionRef.current = null;
     storeSession(null);
     setSession(null);
+    setEntitlement(null);
     setFarm(null);
     setAccount(null);
     setActiveView('dashboard');
@@ -553,6 +572,7 @@ function App() {
       const response = await apiFetch('/api/session', { timeoutMs: 20000 });
       if (!response.ok) throw new Error(await readErrorResponse(response));
       const data = await readJsonWithTimeout(response);
+      setEntitlement(data.entitlement);
       setFarm(data.farm);
       setAccount(data.account);
       return data;
@@ -620,6 +640,7 @@ function App() {
     sessionRef.current = null;
     signOutFarm(activeSession?.access_token);
     setSession(null);
+    setEntitlement(null);
     setFarm(null);
     setAccount(null);
     setFarmUsers([]);
@@ -839,6 +860,7 @@ function App() {
     sessionRef.current = null;
     storeSession(null);
     setSession(null);
+    setEntitlement(null);
     setFarm(null);
     setAccount(null);
     setFarmUsers([]);
@@ -1929,6 +1951,12 @@ function App() {
     );
   }
 
+  if (subscriptionRestricted || billingReturn === 'returned' || billingReturn === 'managed') return <main className="app-shell">
+    <section className="header-band"><div className="brand-lockup"><img src={binFlowMark} alt="" /><span>BinFlow</span></div><div className="account-tools"><strong>{farm?.name}</strong><button type="button" onClick={logout}>Log Out</button></div></section>
+    {activeView === 'account' ? <AccountSettings account={{ ...account, email: session.user?.email || account.email }} farm={farm} apiFetch={apiFetch} onDeleted={finishAccountDeletion} onBack={() => setActiveView('billing')} /> :
+      <BillingSettings returnState={billingReturn} onActivated={finishBillingReturn} apiFetch={apiFetch} account={account} entitlement={entitlement} onRefresh={loadFarmSession} onAccount={() => setActiveView('account')} />}
+  </main>;
+
   return (
     <main className={`app-shell ${isEmployee ? 'employee-shell' : ''}`}>
       <section className="header-band">
@@ -2017,7 +2045,8 @@ function App() {
 
       {requestError && activeView !== 'scanner' && <div role="alert" className="notice app-notice">{requestError}<button type="button" aria-label="Dismiss notification" onClick={() => setRequestError('')}>Dismiss</button></div>}
 
-      {activeView === 'settings' && <SettingsHome role={account.role} onOpen={view => {
+      {activeView === 'billing' && <BillingSettings returnState={billingReturn} onActivated={finishBillingReturn} apiFetch={apiFetch} account={account} entitlement={entitlement} onRefresh={loadFarmSession} onAccount={() => setActiveView('account')} onBack={() => setActiveView('settings')} />}
+      {activeView === 'settings' && <SettingsHome billingAvailable={Boolean(entitlement && entitlement.status !== 'not_configured')} role={account.role} onOpen={view => {
         if (!canOpenView(account.role, view)) return;
         setActiveView(view);
         if (view === 'team') loadFarmUsers();

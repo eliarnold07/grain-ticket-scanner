@@ -1,7 +1,7 @@
 import { isPublicInvitationRequest } from './supabaseStore.js';
 
 const employeeRoutes = new Set([
-  'GET /session', 'GET /account-deletion', 'GET /dropdowns', 'GET /scanner-contracts',
+  'GET /billing/status', 'GET /billing/price', 'POST /billing/reconcile', 'GET /session', 'GET /account-deletion', 'GET /dropdowns', 'GET /scanner-contracts',
   'DELETE /account', 'POST /extract-ticket', 'POST /submit-ticket'
 ]);
 
