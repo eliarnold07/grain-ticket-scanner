@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { billingConfig, billingEnvironment, BILLING_STAGING_ORIGIN } from './billing/config.js';
 import { withBillingDeletion } from './billing/accountDeletion.js';
-import { registerBillingWebhook, registerBillingRoutes } from './billing/routes.js';
+import { registerBillingWebhook, registerBillingRoutes, registerIosHandoffRedemption } from './billing/routes.js';
 import multer from 'multer';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
@@ -128,6 +128,7 @@ app.use(cors({
 }));
 registerBillingWebhook(app);
 app.use('/api',releaseWriteGuard);
+registerIosHandoffRedemption(app);
 app.use(express.json({ limit: '2mb' }));
 app.param('id', (_req, res, next, id) => {
   try { requireUuid(id); next(); } catch { res.status(400).json({ code: 'INVALID_ID' }); }

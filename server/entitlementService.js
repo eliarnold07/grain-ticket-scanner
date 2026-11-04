@@ -27,7 +27,7 @@ export const getFarmEntitlement=farmId=>resolveFarmEntitlement(farmId);
 export const recoveryRoutes=new Set([
   'GET /session','GET /account-deletion','DELETE /account','GET /users',
   'GET /billing/status','GET /billing/price','POST /billing/checkout','POST /billing/portal',
-  'POST /billing/reconcile','GET /billing/export'
+  'POST /billing/reconcile','GET /billing/export','POST /billing/ios-handoff'
 ]);
 export function entitlementGuard(resolve=getFarmEntitlement) {
   return async(req,res,next)=>{

@@ -1,3 +1,4 @@
+import { IosCheckoutPage } from './IosCheckoutPage.jsx';
 import BillingSettings, { billingRestricted } from './BillingSettings.jsx';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -3152,4 +3153,10 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+const browserBillingState = new URLSearchParams(window.location.search).get('billing');
+const iosBrowserCheckout = ['ios-handoff','ios-returned','ios-canceled'].includes(browserBillingState);
+const handoffCode = browserBillingState === 'ios-handoff' ? window.location.hash.slice(1) : '';
+if (handoffCode) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+createRoot(document.getElementById('root')).render(iosBrowserCheckout
+  ? <IosCheckoutPage state={browserBillingState} code={handoffCode} apiBase={API_BASE} />
+  : <App />);

@@ -1,16 +1,98 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { billingRestricted, billingPresentation, billingError } from './billingPresentation.js';
+import { binFlowStorefront, canOfferIosCheckout, confirmedIosActivation } from './iosCheckout.js';
 import './billing.css';
 export { billingRestricted } from './billingPresentation.js';
 const date = v => v && Number.isFinite(Date.parse(v)) ? new Date(v).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}) : 'Not scheduled';
 export default function BillingSettings({ apiFetch, account, entitlement, onRefresh, onAccount, onBack, onActivated, returnState, platform=Capacitor.getPlatform() }) {
   const [price,setPrice]=useState(null), [details,setDetails]=useState(null), [busy,setBusy]=useState(''), [message,setMessage]=useState(''), [error,setError]=useState(''), [waiting,setWaiting]=useState(returnState==='returned');
   const [interval, setInterval] = useState('month');
+  const [storefront,setStorefront] = useState('');
+  const [iosReturn,setIosReturn] = useState(0);
   const lock=useRef(false), callbacks=useRef({apiFetch,onRefresh,onActivated});
   callbacks.current={apiFetch,onRefresh,onActivated};
   const native=platform!=='web', admin=account.role==='admin', disabled=entitlement?.status==='not_configured', restricted=billingRestricted(entitlement);
   const state=billingPresentation(entitlement || {});
+  const iosOffer = canOfferIosCheckout({
+    platform, storefront, role:account.role, enabled:details?.ios_handoff_enabled,
+    canCheckout:details?.can_checkout, price
+  });
+  useEffect(()=>{
+    if (platform !== 'ios' || !admin || !details?.ios_handoff_enabled) return;
+    let current = 0;
+    async function update() {
+      if (document.visibilityState !== 'visible') return;
+      const request = ++current;
+      setStorefront('');
+      const value = await binFlowStorefront.getStorefront().catch(()=>null);
+      if (request === current) setStorefront(value?.countryCode || '');
+    }
+    update();
+    document.addEventListener('visibilitychange',update);
+    return ()=>{current++;document.removeEventListener('visibilitychange',update);};
+  },[platform,admin,details?.ios_handoff_enabled]);
+  useEffect(()=>{
+    if (platform !== 'ios' || storefront !== 'USA' || !admin || !details?.ios_handoff_enabled || !details.can_checkout) return;
+    let alive=true;
+    callbacks.current.apiFetch('/api/billing/price').then(r=>r.ok?r.json():null)
+      .then(value=>{if(alive)setPrice(value);}).catch(()=>{});
+    return ()=>{alive=false;};
+  },[platform,storefront,admin,details?.ios_handoff_enabled,details?.can_checkout]);
+  useEffect(()=>{
+    if (!iosReturn) return;
+    let stopped=false, timer, deadline=0;
+    async function check() {
+      if (stopped || document.visibilityState !== 'visible') return;
+      if (!deadline) deadline = Date.now()+45000;
+      try {
+        const r=await callbacks.current.apiFetch('/api/billing/status');
+        if (r.ok) {
+          const data=await r.json();
+          if (stopped) return;
+          setDetails(data);
+          if (confirmedIosActivation(data.entitlement)) {
+            const session=await callbacks.current.onRefresh();
+            if (stopped) return;
+            if (confirmedIosActivation(session?.entitlement)) {
+              setIosReturn(0);
+              callbacks.current.onActivated?.('returned');
+              return;
+            }
+          }
+        }
+      } catch { /* Retry only while the app is visible. */ }
+      if (stopped) return;
+      if (Date.now() < deadline) timer=setTimeout(check,2500);
+      else {
+        setIosReturn(0);
+        setMessage('We haven’t confirmed a subscription yet. Check status again or retry Checkout if you canceled.');
+      }
+    }
+    function visibility() {
+      clearTimeout(timer);
+      deadline=0;
+      if (document.visibilityState === 'visible') timer=setTimeout(check,250);
+    }
+    visibility();
+    document.addEventListener('visibilitychange',visibility);
+    return ()=>{stopped=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);};
+  },[iosReturn]);
+  async function openIosCheckout() {
+    if (!iosOffer || lock.current) return;
+    lock.current=true;setBusy('ios-checkout');setError('');setMessage('');
+    try {
+      const {countryCode}=await binFlowStorefront.getStorefront();
+      if (countryCode !== 'USA') { setStorefront(''); return; }
+      const r=await apiFetch('/api/billing/ios-handoff',{method:'POST',headers:{'X-BinFlow-Platform':'ios'}});
+      const data=await r.json();
+      if (!r.ok) throw new Error(billingError(data.code));
+      await binFlowStorefront.openCheckout({url:data.url});
+      setIosReturn(Date.now());
+      setMessage('After Checkout, return to BinFlow to confirm your farm access.');
+    } catch (e) { setError(e.message || billingError()); }
+    finally { lock.current=false;setBusy(''); }
+  }
   async function loadDetails() {
     const r=await callbacks.current.apiFetch('/api/billing/status');
     if(!r.ok) throw new Error('We couldn’t load billing details. Please try again.');
@@ -23,7 +105,7 @@ export default function BillingSettings({ apiFetch, account, entitlement, onRefr
       if(admin&&!native){const p=await callbacks.current.apiFetch('/api/billing/price');if(!p.ok)throw new Error();const v=await p.json();if(alive)setPrice(v);}
     } catch {if(alive)setError('We couldn’t load billing details. Try again in a moment.');}})();
     return()=>{alive=false;};
-  },[account.farm_id,admin,native,disabled]);
+  },[account.farm_id,admin,native,disabled,entitlement?.status]);
   useEffect(()=>{
     if(returnState!=='returned' && returnState!=='managed')return;
     let stopped=false,timer;const started=Date.now();
@@ -73,8 +155,8 @@ export default function BillingSettings({ apiFetch, account, entitlement, onRefr
   return <section className="billing-view" aria-labelledby="billing-title">
     {onBack&&<button className="settings-back billing-back" onClick={onBack}>← Back to Settings</button>}
     <header className="billing-heading"><p className="billing-eyebrow">FARM SUBSCRIPTION</p><span className={`billing-badge billing-${waiting?'neutral':state.tone}`}>{waiting?'Confirming access':state.label}</span>
-      <h2 id="billing-title">{waiting?'Activating your farm…':native&&restricted?'Your farm subscription':state.title}</h2>
-      <p>{waiting?'We’re confirming your subscription securely. This usually takes a few seconds. You’ll enter your farm automatically when access is ready.':native&&restricted?'This app recognizes your farm’s existing subscription. Check your status or contact your farm administrator for help.':state.detail}</p>
+      <h2 id="billing-title">{waiting?'Activating your farm…':iosOffer?'Activate your BinFlow subscription':native?'Your farm subscription':state.title}</h2>
+      <p>{waiting?'We’re confirming your subscription securely. This usually takes a few seconds. You’ll enter your farm automatically when access is ready.':native?'Check your farm’s subscription status and access.':state.detail}</p>
     </header>
     {returnState==='canceled'&&<p className="billing-notice" role="status">You returned without completing Checkout. You can continue when you’re ready; farm access starts only after confirmation.</p>}
     {waiting&&<div className="billing-progress" role="status">Confirming subscription · Preparing your workspace</div>}
@@ -112,7 +194,12 @@ export default function BillingSettings({ apiFetch, account, entitlement, onRefr
         </>}
         {admin&&!native&&details?.can_portal&&!waiting&&<button className={offer?'billing-secondary':'billing-primary'} disabled={!!busy} onClick={()=>action('portal')}>{busy==='portal'?'Opening secure billing…':'Manage billing'}</button>}
         {!admin&&<p className="billing-note">{restricted ? 'A farm administrator needs to activate or restore the subscription. Your farm records are safe.' : 'Your farm administrator manages the subscription. You don’t need a separate plan.'}</p>}
-        {native&&admin&&<p className="billing-note">Existing farm access is shared with this app. Purchasing and payment changes are not available in this version.</p>}
+        {iosOffer&&<div className="billing-actions">
+          <p><strong>$29.99/month or $299.99/year</strong>{trial ? ' after your 30-day free trial.' : '.'}</p>
+          <button className="billing-primary" disabled={Boolean(busy)} onClick={openIosCheckout}>Continue to Secure Checkout</button>
+          <p className="billing-fine">Opens your browser to choose a plan and pay securely through Stripe.</p>
+        </div>}
+        {native&&admin&&!iosOffer&&<p className="billing-note">Existing farm access is shared with this app. Check your status or contact support for help.</p>}
         {admin&&!native&&!disabled&&<p className="billing-secure">Payments managed securely by Stripe.</p>}
       </div>
       <aside className="billing-summary" aria-label="Subscription details"><h3>Your subscription</h3><dl>

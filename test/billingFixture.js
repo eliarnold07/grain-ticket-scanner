@@ -28,5 +28,6 @@ export async function billingFixture(database) {
   await db.exec(await readFile(`supabase/migrations/${file}`,'utf8'));
   const rollout=(await readdir('supabase/migrations')).find(x=>x.endsWith('_billing_rollout_controls.sql'));
   await db.exec(await readFile(`supabase/migrations/${rollout}`,'utf8'));
+  await db.exec(await readFile('supabase/migrations/20261104190000_billing_ios_handoff.sql','utf8'));
   return {db,farm,otherFarm};
 }

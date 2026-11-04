@@ -15,6 +15,7 @@ try {
   await db.query(await readFile(`supabase/migrations/${migration}`,'utf8'));
   const rollout=(await readdir('supabase/migrations')).find(x=>x.endsWith('_billing_rollout_controls.sql'));
   await db.query(await readFile(`supabase/migrations/${rollout}`,'utf8'));
+  await db.query(await readFile('supabase/migrations/20261104190000_billing_ios_handoff.sql','utf8'));
   await db.query("update private.billing_policy set mode='enforced',enforce_at=statement_timestamp()");
   console.log('Blank local schema initialized with billing enforced. No hosted services accessed.');
 } finally {await db.end();}
