@@ -18,7 +18,7 @@ const stage = {
   STRIPE_WEBHOOK_SECRET:'whsec_fixture',
   STRIPE_PRICE_ID:'price_fixture',
   BILLING_TRIAL_IDENTITY_SECRET:'x'.repeat(32),
-  BILLING_WEB_URL:'https://staging.getbinflow.com/app/'
+  BILLING_WEB_URL:'https://binflow-staging.pages.dev/app/'
 };
 
 test('hosted billing accepts only an explicit, matched staging configuration', () => {
@@ -40,8 +40,9 @@ test('hosted billing accepts only an explicit, matched staging configuration', (
     {BILLING_DATABASE_URL:stage.BILLING_DATABASE_URL+'?sslmode=disable'},
     {BILLING_DATABASE_URL:stage.BILLING_DATABASE_URL.replace('aws-0-us-east-1.pooler.supabase.com','unexpected.pooler.supabase.com')},
     {BILLING_WEB_URL:'https://getbinflow.com/app/'},
-    {BILLING_WEB_URL:'http://staging.getbinflow.com/app/'},
-    {BILLING_WEB_URL:'https://staging.getbinflow.com/app/?next=production'},
+    {BILLING_WEB_URL:'https://staging.getbinflow.com/app/'},
+    {BILLING_WEB_URL:'http://binflow-staging.pages.dev/app/'},
+    {BILLING_WEB_URL:'https://binflow-staging.pages.dev/app/?next=production'},
     {STRIPE_SECRET_KEY:'sk_live_fixture'},
     {STRIPE_WEBHOOK_SECRET:''}
   ];

@@ -5,7 +5,7 @@ export function billingEnabled(env = process.env) {
 
 export const BILLING_STAGING_REF = 'vstdydmykzzwbyvlpesk';
 export const BILLING_STAGING_ROLE = 'binflow_billing_stage';
-export const BILLING_STAGING_ORIGIN = 'https://staging.getbinflow.com';
+export const BILLING_STAGING_ORIGIN = 'https://binflow-staging.pages.dev';
 const stagingAuth = `https://${BILLING_STAGING_REF}.supabase.co`;
 const stagingPooler = 'aws-0-us-east-1.pooler.supabase.com';
 const loopback = ['localhost', '127.0.0.1', '[::1]'];
