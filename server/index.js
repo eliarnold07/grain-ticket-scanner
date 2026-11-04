@@ -78,7 +78,7 @@ const configuredOrigins = String(process.env.CORS_ORIGIN || '')
   .filter(Boolean);
 const stagingBilling = billingEnvironment() === 'staging';
 if (stagingBilling) billingConfig();
-const allowedOrigins = new Set(stagingBilling ? [BILLING_STAGING_ORIGIN] : [
+const allowedOrigins = new Set(stagingBilling ? [BILLING_STAGING_ORIGIN, 'binflow://localhost'] : [
   ...configuredOrigins,
   'https://getbinflow.com',
   'https://www.getbinflow.com',

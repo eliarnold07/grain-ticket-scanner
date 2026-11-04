@@ -1,13 +1,16 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { loadMobileEnv } from './mobile-env.js';
+import { loadMobileEnv, PRODUCTION_API_URL, PRODUCTION_SUPABASE_URL, STAGING_API_URL, STAGING_SUPABASE_URL } from './mobile-env.js';
 import { mobileEntryAssets } from './mobile-assets.js';
 
-const roots = ['dist-mobile', path.join('ios', 'App', 'App', 'public')];
-const config = loadMobileEnv();
+const staging = process.argv.includes('--staging');
+const roots = ['dist-mobile'];
+if (!process.argv.includes('--web-only')) roots.push(path.join('ios', 'App', 'App', 'public'));
+const config = loadMobileEnv(process.cwd(), staging ? 'mobile-staging' : 'mobile');
 const requiredText = [config.apiUrl, config.supabaseUrl, config.publicKey];
 const forbiddenText = [
   'http://localhost:3001',
+  ...(staging ? [PRODUCTION_API_URL, PRODUCTION_SUPABASE_URL] : [STAGING_API_URL, STAGING_SUPABASE_URL]),
   'SUPABASE_SERVICE_ROLE_KEY',
   'OPENAI_API_KEY',
   'STRIPE_SECRET',
@@ -62,7 +65,7 @@ for (const root of roots) {
   } catch { failures.push(`Missing, invalid or unresolved mobile entry assets in ${root}.`); }
 }
 
-for (const file of files.filter(file => file.startsWith(`dist-mobile${path.sep}`))) {
+for (const file of roots[1] ? files.filter(file => file.startsWith(`dist-mobile${path.sep}`)) : []) {
   try {
     const native = path.join(roots[1], path.relative(roots[0], file));
     if (!(await readFile(file)).equals(await readFile(native))) failures.push(`Native asset differs from the latest mobile build: ${path.relative(roots[0], file)}.`);
@@ -73,7 +76,7 @@ for (const root of roots) {
   const bundled = contents.filter(({ file }) => file.startsWith(`${root}${path.sep}`));
   for (const [index, expected] of requiredText.entries()) {
     if (!bundled.some(({ text }) => text.includes(expected))) {
-      failures.push(`Missing configured ${['production API', 'production Supabase URL', 'public Supabase key'][index]} in ${root}. Rebuild and sync before installing.`);
+      failures.push(`Missing configured ${['API origin', 'Supabase URL', 'public Supabase key'][index]} in ${root}. Rebuild and sync before installing.`);
     }
   }
 }

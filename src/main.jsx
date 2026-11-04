@@ -464,12 +464,17 @@ function App() {
     const handleFocus = async () => { const data = await loadFarmSession(); if (data && !billingRestricted(data.entitlement)) { loadDropdowns(); loadScannerContracts(); } };
     const intervalId = window.setInterval(handleFocus, 60000);
 
+    function handleVisibility() {
+      if (document.visibilityState === 'visible') handleFocus();
+    }
     window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [isAuthReady, isAuthenticated, subscriptionRestricted]);
 
