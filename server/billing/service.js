@@ -26,10 +26,17 @@ export function subscriptionSnapshot(s, previous = {}, now = new Date()) {
 
 export function createBillingService({ db, stripe, config, now = () => new Date() }) {
   async function locked(tx, farmId, actor, admin = true) {
-    const farm = (await tx.query('select id,account_access_state from public.farms where id=$1 for update', [farmId])).rows[0];
+    const hosted = config.mode === 'staging';
+    const lockSql = hosted
+      ? 'select * from private.billing_stage_lock_farm($1)'
+      : 'select id,account_access_state from public.farms where id=$1 for update';
+    const farm = (await tx.query(lockSql, [farmId])).rows[0];
     if (!farm) throw new BillingError('FARM_NOT_FOUND', 404);
     if (actor) {
-      const member = (await tx.query('select a.role,u.email,u.email_confirmed_at from public.farm_accounts a join auth.users u on u.id=a.user_id where a.user_id=$1 and a.farm_id=$2', [actor, farmId])).rows[0];
+      const memberSql = hosted
+        ? 'select * from private.billing_stage_member($1,$2)'
+        : 'select a.role,u.email,u.email_confirmed_at from public.farm_accounts a join auth.users u on u.id=a.user_id where a.user_id=$1 and a.farm_id=$2';
+      const member = (await tx.query(memberSql, [actor, farmId])).rows[0];
       if (!member || (admin && member.role !== 'admin')) throw new BillingError('BILLING_ADMIN_REQUIRED', 403);
       if (farm.account_access_state !== 'active') throw new BillingError('FARM_ARCHIVED', 403);
       return member;
