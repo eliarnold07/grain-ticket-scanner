@@ -286,3 +286,11 @@ footer a { display: inline-flex; min-height: 44px; align-items: center; }
 .founder-contact-links a { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .3rem .65rem; min-height: 48px; padding: .6rem .8rem; background: #f7efda; color: #123f2c; border-radius: 8px; font-weight: 750; text-underline-offset: .18em; }
 .founder-contact-links a span { font-size: .85rem; font-weight: 550; }
 @media (max-width: 680px) { .founder-contact { grid-template-columns: minmax(0, 1fr); } }
+
+.history-swipe-hint { display: none; }
+.history-swipe:focus-visible { outline: 3px solid #196443; outline-offset: 3px; }
+@media (max-width: 680px) {
+  .history-swipe-hint { display: block; margin-bottom: .45rem; color: var(--muted); font-size: .82rem; font-weight: 700; }
+  .history-swipe { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .journey-stages .history-swipe img { width: 1040px; max-width: none; height: auto; border: 0; border-radius: 0; }
+}
