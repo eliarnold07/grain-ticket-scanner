@@ -1,3 +1,6 @@
+export function billingUiVisible(entitlement) {
+  return entitlement?.billing_ui_enabled === true;
+}
 export function billingRestricted(e, time = Date.now()) {
   return e?.enforcement_mode === 'enforced' && (e.has_access !== true || (e.valid_until && new Date(e.valid_until).getTime() <= time));
 }

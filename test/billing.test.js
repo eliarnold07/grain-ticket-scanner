@@ -28,7 +28,7 @@ test('billing lifecycle uses real local SQL, membership guards, RLS, expiry and 
     checkout:{sessions:{create:async body=>{calls++;const s={id:'cs_test',livemode:false,status:'open',url:'https://checkout.stripe.com/test',expires_at:Math.floor(+clock/1000)+3600,body};sessions.set(s.id,s);return s;},retrieve:async id=>sessions.get(id),expire:async id=>{sessions.get(id).status='expired';}}},
     billingPortal:{sessions:{create:async()=>({url:'https://billing.stripe.com/test'})}}
   };
-  const service=createBillingService({db,stripe,config:{priceId:'price_test',annualPriceId:'price_annual',identitySecret:'x'.repeat(32),trialDays:30,appUrl:'http://localhost:5173/app/'},now:()=>clock});
+  const service=createBillingService({db,stripe,config:{customerFacingBilling:true,priceId:'price_test',annualPriceId:'price_annual',identitySecret:'x'.repeat(32),trialDays:30,appUrl:'http://localhost:5173/app/'},now:()=>clock});
   assert.equal((await service.entitlement(farm)).enforcement_mode,'disabled');
   await db.exec("set request.jwt.claim.role='service_role'");
   const bin=(await db.query('select public.farm_inventory_command($1,$2,$3) as result',[admin,'create_bin',JSON.stringify({bin_name:'Stored Corn',crop_type:'Corn',estimated_capacity_bushels:1000,current_bushels:500,opening_mode:'bushels'})])).rows[0].result.bin;
@@ -208,7 +208,7 @@ test('native external purchase presentation stays off without explicit platform 
 test('turning off provider billing cannot bypass database enforcement; outages fail closed',async()=>{
   const options={configured:true,actor:admin,providerEnabled:false,legacyEnforced:false};
   const locked={enforcement_mode:'enforced',has_access:false};
-  assert.deepEqual(await resolveFarmEntitlement('farm',{...options,rpc:async()=>locked}),locked);
+  assert.deepEqual(await resolveFarmEntitlement('farm',{...options,rpc:async()=>locked}),{...locked,billing_ui_enabled:false});
   await assert.rejects(resolveFarmEntitlement('farm',{...options,rpc:async()=>{throw new Error('offline');}}),/offline/);
   assert.equal((await resolveFarmEntitlement('farm',{...options,rpc:async()=>{throw Object.assign(new Error('missing'),{code:'PGRST202'});}})).enforcement_mode,'disabled');
   await assert.rejects(resolveFarmEntitlement('farm',{...options,providerEnabled:true,rpc:async()=>{throw Object.assign(new Error('missing'),{code:'PGRST202'});}}),/missing/);

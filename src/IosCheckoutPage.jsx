@@ -1,7 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './billing.css';
 
 export function IosCheckoutPage({ state, code, apiBase }) {
+  const [available,setAvailable] = useState(false);
+  useEffect(()=>{
+    let alive=true;
+    fetch(apiBase+'/api/billing/availability',{credentials:'omit',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(15000)})
+      .then(r=>r.ok?r.json():null).then(data=>{if(alive)setAvailable(data?.billing_ui_enabled===true);}).catch(()=>{});
+    return ()=>{alive=false;};
+  },[apiBase]);
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState('');
   const submitted = useRef(false);
@@ -28,6 +35,7 @@ export function IosCheckoutPage({ state, code, apiBase }) {
       setBusy(false);
     }
   }
+  if (!available) return <main className="app-shell"><h1>BinFlow</h1><a href="/app/">Open BinFlow</a></main>;
   return <main className="billing-view" aria-labelledby="ios-checkout-title">
     <header className="billing-heading"><p className="billing-eyebrow">BINFLOW FARM SUBSCRIPTION</p>
       <h1 id="ios-checkout-title">{selecting ? 'Choose your farm plan' : 'Return to BinFlow'}</h1>

@@ -2,11 +2,15 @@
 
 This branch starts from staging commit `b74ad9676773945f2bccd82110175303ab45316c`. The U.S. checkout branch preserves the tested iOS preparation at `864da5f1e9297ee293f179d0906f8c4b05ebb247`. The native project comes from the reviewed `feature/ios-app-store` revision `07fa6496bdbfe526793ab6d37c71c6fb25a44360`. Staging already has the camera and ticket-flow polish. This branch keeps the bundle identifier, icons, camera/photo permissions, scene lifecycle, SwiftPM dependencies, and automatic signing. It sets the marketing version to 1.1 and the proposed build number to 2.
 
+## Coordinated launch decision
+
+All existing and new customers remain free until one approved paid launch after physical-device testing, iOS 1.1 App Store approval and production readiness. No customer billing UI is exposed beforehand. BILLING_CUSTOMER_UI_ENABLED defaults false. Staging testers can explicitly opt in with sandbox credentials. Production UI and Checkout additionally require coordinated database launch readiness and active enforcement. Preserve reviewer access throughout review and disclose the gated purchase flow in Review Notes.
+
 ## Release gates
 
 - Finish the current 1.0 review and verify its status before creating the 1.1 submission. Use a separate checkout from any Mac work in progress. Review Mac-local native and signing differences before discarding or replacing any of them.
-- Approve the hosted staging migration and API and Pages deployment described below before device acceptance. Verify staging Auth, account deletion readiness, and fresh fixtures before testing.
-- The current backend billing runtime supports local and hosted **sandbox** only. A subscription-enabled production launch requires a separately reviewed production billing runtime, least-privilege role and TLS, migration and recovery rehearsal, Stripe live setup, webhook validation, and an enforcement rollout decision. Confirm the production API revision and old-client compatibility before App Review. Do not turn on enforcement as part of preparing an archive.
+- Hosted staging handoff integration is complete at 6224cf3. The final production-readiness changes on this branch have not been deployed; obtain approval for their staging integration and regression acceptance before the final archive. Verify staging Auth, account deletion readiness, and fresh fixtures before testing.
+- Production billing support is prepared and remains off until approved. Follow docs/PRODUCTION-BILLING-RELEASE.md for the pinned runtime, least-privilege role, verified TLS, migration/recovery rehearsal, live Stripe configuration, reconciliation and enforcement approvals. Confirm the production API revision and old-client compatibility before App Review. Do not turn on enforcement as part of preparing an archive.
 - Resolve or explicitly review dependency audit findings before promoting the backend. Check the combined release against the latest `develop`, run CI, and pin the exact approved iOS SHA for archive.
 - Confirm initial U.S.-only App Store availability before submission and explain the external purchase flow in Review Notes. StoreKit's current `USA` storefront is required even with U.S.-only availability. An employee, non-U.S. storefront, unknown storefront, inactive feature flag, or missing plans gets status and support with no purchase CTA. Billing management remains on the existing signed-in website. The native app cannot call the Stripe Checkout or portal endpoints directly.
 - Apple's guidelines exempt U.S. storefront apps from the external link entitlement requirement in 3.1.1(a). Other storefronts require an applicable exception or region-specific entitlement and terms for an external purchase CTA. A storefront decision must use App Store storefront, with a conservative fallback for unknown values. Device locale is unsuitable. A broader StoreKit or entitlement flow is a separate product and review decision. This U.S. link design uses 3.1.1(a). Review all applicable agreement, disclosure, consumer and storefront terms before submission. Pricing, trial eligibility and renewal terms must be accurate. App Review approval remains Apple's decision.
@@ -23,7 +27,7 @@ In a clean clone, fetch and check out the approved feature revision. Record the 
 
 ```sh
 git fetch origin
-git switch --detach origin/codex/ios-us-checkout
+git switch --detach origin/codex/production-billing-readiness
 git rev-parse HEAD
 git status --short
 node --version
@@ -81,7 +85,7 @@ If a candidate fails verification, stop before upload and rebuild from the last 
 
 Windows can verify the Git tree, dependency lock, app builds, Capacitor configuration, package paths, and generated web assets. The production-shaped offline build uses a synthetic public-key fixture for static verification only. Windows does not verify Xcode compilation, Swift package resolution, signed native asset sync, WKWebView lifecycle, physical camera/photo access, Files export, device signing, archive validation, TestFlight, or App Review.
 
-Verified on Windows with Node 24.16.0: automated Express and PostgreSQL fixture tests, the production web build, both mobile builds and asset checks, and staging and release-shaped asset copy into the native project. Read-only probes verified the existing staging API, Pages, restricted TLS database login, Stripe sandbox prices and webhook. The new hosted handoff awaits the approved migration and deployment. Existing server dependency audit findings for `body-parser` and `multer` remain release gates.
+Verified on Windows with Node 24.16.0: automated Express and PostgreSQL fixture tests, the production web build, both mobile builds and asset checks, and staging and release-shaped asset copy into the native project. Read-only probes verified the existing staging API, Pages, restricted TLS database login, Stripe sandbox prices and webhook. The hosted staging handoff passed on staging 6224cf3 before this final production preparation. The new production runtime and release-gate migration require a separate reviewed rollout. Existing server dependency audit findings for `body-parser` and `multer` remain release gates.
 
 ## Hosted staging handoff release
 

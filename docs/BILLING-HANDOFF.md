@@ -110,8 +110,7 @@ webhooks, real charges, customer queries, native edits, App Review changes or
 messages to other chats occurred. No ongoing monitor or automatic resumption is
 configured. Prior historical release approval is not future billing approval.
 
-The latest proposal is $29/month/farm with a 30-day authorized trial, superseding
-the older price in common context. Employees inherit access; no separate employee
+The final pricing is $29.99/month or $299.99/year per farm with a full 30-day trial. This supersedes the earlier pricing proposals. Employees inherit access; no separate employee
 subscription. Existing schema still enforces one farm membership per account.
 ## Subscription UX acceptance, November 3, 2026
 

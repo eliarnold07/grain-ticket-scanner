@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { initializeBillingRuntime } from './billing/runtime.js';
+import { startBillingReconciliation } from './billing/reconciliation.js';
 import { billingConfig, billingEnvironment, BILLING_STAGING_ORIGIN } from './billing/config.js';
 import { withBillingDeletion } from './billing/accountDeletion.js';
 import { registerBillingWebhook, registerBillingRoutes, registerIosHandoffRedemption } from './billing/routes.js';
@@ -77,15 +79,15 @@ const configuredOrigins = String(process.env.CORS_ORIGIN || '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 const stagingBilling = billingEnvironment() === 'staging';
-if (stagingBilling) billingConfig();
+if (billingEnvironment() !== 'local') billingConfig();
 const allowedOrigins = new Set(stagingBilling ? [BILLING_STAGING_ORIGIN, 'binflow://localhost'] : [
-  ...configuredOrigins,
+  ...(billingEnvironment() === 'production' ? [] : configuredOrigins),
   'https://getbinflow.com',
   'https://www.getbinflow.com',
   'https://eliarnold07.github.io',
   'capacitor://localhost',
   'binflow://localhost',
-  'http://localhost:5173'
+  ...(billingEnvironment() === 'production' ? [] : ['http://localhost:5173'])
 ]);
 
 const openai = new OpenAI({
@@ -287,9 +289,8 @@ async function validateTicketAccounting(input) {
 
 function logError(label, error) {
   console.error(label, {
-    message: error.message,
-    status: error.status,
-    code: error.code
+    status: Number.isInteger(error.status) ? error.status : undefined,
+    code: /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code || '') ? error.code : undefined
   });
 }
 
@@ -952,6 +953,8 @@ app.use((error, _req, res, _next) => {
   return res.status(error.type === 'entity.parse.failed' ? 400 : 500).json({ error: 'We could not complete that request. Please try again.' });
 });
 
+try { await initializeBillingRuntime(); }
+catch { console.error('Billing startup validation failed. Verify the private environment and provider configuration.'); process.exit(1); }
 app.listen(port, () => {
   console.log(`Grain Ticket Scanner API running on port ${port}`);
   console.log('Ticket storage mode: Supabase');
@@ -960,3 +963,4 @@ app.listen(port, () => {
 });
 
 startWeeklySummaryScheduler();
+startBillingReconciliation();

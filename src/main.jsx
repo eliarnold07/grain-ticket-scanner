@@ -1,3 +1,4 @@
+import { billingUiVisible } from './billingPresentation.js';
 import { IosCheckoutPage } from './IosCheckoutPage.jsx';
 import BillingSettings, { billingRestricted } from './BillingSettings.jsx';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -259,7 +260,14 @@ function App() {
     else if (kind === 'managed') setActiveView('billing');
   }
   const [billingClock, setBillingClock] = useState(Date.now());
+  const billingUiEnabled = billingUiVisible(entitlement);
   const subscriptionRestricted = billingRestricted(entitlement, billingClock);
+  useEffect(()=>{
+    if (entitlement && !billingUiEnabled) {
+      setActiveView(view=>view==='billing'?'settings':view);
+      setBillingReturn(null);
+    }
+  },[billingUiEnabled,entitlement]);
   useEffect(() => { const id = setInterval(() => setBillingClock(Date.now()), 1000); return () => clearInterval(id); }, []);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const sessionRef = useRef(null);
@@ -1957,7 +1965,7 @@ function App() {
     );
   }
 
-  if (subscriptionRestricted || billingReturn === 'returned' || billingReturn === 'managed') return <main className="app-shell">
+  if (billingUiEnabled && (subscriptionRestricted || billingReturn === 'returned' || billingReturn === 'managed')) return <main className="app-shell">
     <section className="header-band"><div className="brand-lockup"><img src={binFlowMark} alt="" /><span>BinFlow</span></div><div className="account-tools"><strong>{farm?.name}</strong><button type="button" onClick={logout}>Log Out</button></div></section>
     {activeView === 'account' ? <AccountSettings account={{ ...account, email: session.user?.email || account.email }} farm={farm} apiFetch={apiFetch} onDeleted={finishAccountDeletion} onBack={() => setActiveView('billing')} /> :
       <BillingSettings returnState={billingReturn} onActivated={finishBillingReturn} apiFetch={apiFetch} account={account} entitlement={entitlement} onRefresh={loadFarmSession} onAccount={() => setActiveView('account')} />}
@@ -2051,8 +2059,8 @@ function App() {
 
       {requestError && activeView !== 'scanner' && <div role="alert" className="notice app-notice">{requestError}<button type="button" aria-label="Dismiss notification" onClick={() => setRequestError('')}>Dismiss</button></div>}
 
-      {activeView === 'billing' && <BillingSettings returnState={billingReturn} onActivated={finishBillingReturn} apiFetch={apiFetch} account={account} entitlement={entitlement} onRefresh={loadFarmSession} onAccount={() => setActiveView('account')} onBack={() => setActiveView('settings')} />}
-      {activeView === 'settings' && <SettingsHome billingAvailable={Boolean(entitlement && entitlement.status !== 'not_configured')} role={account.role} onOpen={view => {
+      {billingUiEnabled && activeView === 'billing' && <BillingSettings returnState={billingReturn} onActivated={finishBillingReturn} apiFetch={apiFetch} account={account} entitlement={entitlement} onRefresh={loadFarmSession} onAccount={() => setActiveView('account')} onBack={() => setActiveView('settings')} />}
+      {activeView === 'settings' && <SettingsHome billingAvailable={billingUiEnabled} role={account.role} onOpen={view => {
         if (!canOpenView(account.role, view)) return;
         setActiveView(view);
         if (view === 'team') loadFarmUsers();
