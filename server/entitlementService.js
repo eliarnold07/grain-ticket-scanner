@@ -1,3 +1,4 @@
+import { billingRuntime } from './billing/runtime.js';
 import { billingEnabled } from './billing/config.js';
 import { farmFeatureRpc, currentAccount } from './supabaseStore.js';
 
@@ -7,13 +8,18 @@ export function billingEnforcementMode() {
 }
 export const isBillingEnforced=()=>billingEnforcementMode()==='enforced';
 export async function resolveFarmEntitlement(farmId, { rpc=farmFeatureRpc, actor=currentAccount()?.user_id || null,
-  configured=Boolean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL), providerEnabled=billingEnabled(), legacyEnforced=isBillingEnforced() }={}) {
+  configured=Boolean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL), providerEnabled=billingEnabled(), legacyEnforced=isBillingEnforced(), refresh=(farm,actor)=>billingRuntime().service.refreshEntitlement(farm,actor), refreshing=false }={}) {
   // Always ask the application database, even when provider operations are off.
   // Only a positively missing pre-migration RPC can preserve legacy access.
   if (configured) {
     try {
       const result=await rpc('binflow_billing_entitlement',{p_farm:farmId,p_actor:actor});
       if (!result || !['disabled','observe','enforced'].includes(result.enforcement_mode) || typeof result.has_access!=='boolean') throw new Error('Invalid entitlement response');
+      if (!refreshing && providerEnabled && result.enforcement_mode === 'enforced' && ['verification_required','expired'].includes(result.reason) && ['active','trialing','past_due'].includes(result.status)) {
+        await refresh(farmId, actor);
+        // Re-read the database, which stays authoritative for grants and policy.
+        return resolveFarmEntitlement(farmId, {rpc,actor,configured,providerEnabled,legacyEnforced,refreshing:true});
+      }
       return result;
     } catch(error) {
       if (error.code!=='PGRST202' || providerEnabled || legacyEnforced) throw error;

@@ -7,8 +7,8 @@ const terminal = new Set(['canceled', 'incomplete_expired']);
 const iso = value => value ? new Date(value * 1000).toISOString() : null;
 const idOf = value => typeof value === 'string' ? value : value?.id;
 
-export function subscriptionSnapshot(s, previous = {}, now = new Date()) {
-  if (s.livemode !== false) throw new BillingError('TEST_MODE_REQUIRED', 400);
+export function subscriptionSnapshot(s, previous = {}, now = new Date(), liveMode = false) {
+  if (s.livemode !== liveMode) throw new BillingError(liveMode ? 'LIVE_MODE_REQUIRED' : 'TEST_MODE_REQUIRED', 400);
   const items = s.items?.data || [];
   const periodEnd = items.length ? Math.min(...items.map(x => x.current_period_end || s.current_period_end || 0)) : s.current_period_end;
   const invoice = s.latest_invoice;
@@ -25,8 +25,9 @@ export function subscriptionSnapshot(s, previous = {}, now = new Date()) {
 }
 
 export function createBillingService({ db, stripe, config, now = () => new Date() }) {
+  const liveMode = config.mode === 'production';
   async function locked(tx, farmId, actor, admin = true) {
-    const hosted = config.mode === 'staging';
+    const hosted = ['staging','production'].includes(config.mode);
     const lockSql = hosted
       ? 'select * from private.billing_stage_lock_farm($1)'
       : 'select id,account_access_state from public.farms where id=$1 for update';
@@ -49,7 +50,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
   }
   async function saveSnapshot(tx, farmId, sub, previous) {
     if (idOf(sub.customer) !== previous.customer_id) throw new BillingError('CUSTOMER_MISMATCH');
-    const snapshot = subscriptionSnapshot(sub, previous, now());
+    const snapshot = subscriptionSnapshot(sub, previous, now(), liveMode);
     // Fixed column list from our own normalized object, never event/body keys.
     const columns = Object.keys(snapshot);
     await tx.query(`update private.farm_subscriptions set ${columns.map((c,i) => `${c}=$${i+2}`).join(',')},updated_at=now() where farm_id=$1`, [farmId, ...Object.values(snapshot)]);
@@ -58,7 +59,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
   async function reconcileLocked(tx, farmId, previous) {
     if (!previous.customer_id) return previous;
     const customer = await stripe.customers.retrieve(previous.customer_id);
-    if (customer.deleted || customer.livemode !== false) throw new BillingError('TEST_CUSTOMER_REQUIRED');
+    if (customer.deleted || customer.livemode !== liveMode) throw new BillingError(liveMode ? 'LIVE_CUSTOMER_REQUIRED' : 'TEST_CUSTOMER_REQUIRED');
     const list = await stripe.subscriptions.list({ customer: previous.customer_id, status: 'all', limit: 100, expand: ['data.latest_invoice'] });
     if (list.has_more) throw new BillingError('SUBSCRIPTION_REVIEW_REQUIRED');
     const live = list.data.filter(s => !terminal.has(s.status));
@@ -69,6 +70,21 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
   }
   async function entitlement(farmId) {
     return (await db.query('select private.billing_entitlement($1) as entitlement', [farmId])).rows[0].entitlement;
+  }
+  async function refreshEntitlement(farmId, actor) {
+    return db.transaction(async tx => {
+      await locked(tx, farmId, actor, false);
+      const s = (await tx.query('select * from private.farm_subscriptions where farm_id=$1',[farmId])).rows[0];
+      // Row locking coalesces simultaneous foreground refreshes. Six hours leaves
+      // ample headroom before the database's 48-hour verification cutoff.
+      const current = (await tx.query('select private.billing_entitlement($1) as entitlement',[farmId])).rows[0].entitlement;
+      const boundary = ['verification_required','expired'].includes(current.reason) && ['active','trialing','past_due'].includes(s?.status);
+      if (s?.customer_id && (boundary || !s.verified_at || +now() - +new Date(s.verified_at) >= 6*3600000)) {
+        await reconcileLocked(tx, farmId, s);
+        return (await tx.query('select private.billing_entitlement($1) as entitlement',[farmId])).rows[0].entitlement;
+      }
+      return current;
+    });
   }
   async function details(farmId, actor) {
     return db.transaction(async tx => {
@@ -88,17 +104,18 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     const id = interval === 'year' ? config.annualPriceId : config.priceId;
     if (!id) throw new BillingError('PLAN_UNAVAILABLE', 409);
     const p = await stripe.prices.retrieve(id);
-    if (p.livemode !== false || !p.active || p.type !== 'recurring' ||
+    if (p.livemode !== liveMode || !p.active || p.type !== 'recurring' ||
         p.recurring?.interval !== interval || p.recurring?.interval_count !== 1 ||
         !Number.isInteger(p.unit_amount) ||
-        (interval === 'year' && (p.currency !== 'usd' || p.unit_amount !== 29999))) {
+        (p.currency !== 'usd' || p.unit_amount !== (interval === 'year' ? 29999 : 2999))) {
       throw new BillingError('PLAN_UNAVAILABLE', 409);
     }
-    return { amount: p.unit_amount, currency: p.currency, interval, trial_days: config.trialDays };
+    return { amount: p.unit_amount, currency: p.currency, interval, trial_days: config.trialDays, product: idOf(p.product) };
   }
   async function price() {
     const monthly = await plan('month');
     const annual = config.annualPriceId ? await plan('year').catch(() => null) : null;
+    if (liveMode && (!annual || !monthly.product || monthly.product !== annual.product)) throw new BillingError('PLAN_UNAVAILABLE');
     return { ...monthly, annual };
   }
   const handoffHash = token => createHash('sha256').update(token).digest('hex');
@@ -175,7 +192,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
       if (s.checkout_attempt !== reservation.checkout_attempt) throw new BillingError('CHECKOUT_CHANGED');
       if (!s.customer_id) {
         const c = await stripe.customers.create({ metadata: { binflow_farm_id: farmId } }, { idempotencyKey: `farm-customer:${s.checkout_attempt}` });
-        if (c.livemode !== false) throw new BillingError('TEST_MODE_REQUIRED');
+        if (c.livemode !== liveMode) throw new BillingError(liveMode ? 'LIVE_MODE_REQUIRED' : 'TEST_MODE_REQUIRED');
         await tx.query('update private.farm_subscriptions set customer_id=$2 where farm_id=$1', [farmId,c.id]);
       }
     });
@@ -213,7 +230,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
         custom_text: { submit: { message: trial ? 'Your saved payment method will be charged automatically when the trial ends. Cancel before that date to avoid the first charge. One subscription covers this farm.' : `This subscription renews ${interval === 'year' ? 'annually' : 'monthly'} until canceled. One subscription covers this farm.` } },
         expires_at: Math.floor(+new Date(s.checkout_started)/1000)+3600
       }, { idempotencyKey: `farm-checkout:${s.checkout_attempt}` });
-      if (session.livemode !== false) throw new BillingError('TEST_MODE_REQUIRED');
+      if (session.livemode !== liveMode) throw new BillingError(liveMode ? 'LIVE_MODE_REQUIRED' : 'TEST_MODE_REQUIRED');
       await tx.query('update private.farm_subscriptions set checkout_session_id=$2,checkout_url=$3,checkout_expires=$4 where farm_id=$1', [farmId,session.id,session.url,iso(session.expires_at)]);
       await tx.query("insert into private.billing_audit(farm_id,action) values($1,'checkout_created')", [farmId]);
       return { url: session.url };
@@ -225,8 +242,8 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
       const s=await row(tx,farmId);
       if (!s.customer_id) throw new BillingError('NO_BILLING_CUSTOMER');
       const c=await stripe.customers.retrieve(s.customer_id);
-      if (c.livemode !== false || c.deleted) throw new BillingError('TEST_CUSTOMER_REQUIRED');
-      const session=await stripe.billingPortal.sessions.create({ customer: s.customer_id, return_url: `${config.appUrl}?billing=managed` });
+      if (c.livemode !== liveMode || c.deleted) throw new BillingError(liveMode ? 'LIVE_CUSTOMER_REQUIRED' : 'TEST_CUSTOMER_REQUIRED');
+      const session=await stripe.billingPortal.sessions.create({ customer: s.customer_id, ...(config.portalConfiguration ? {configuration:config.portalConfiguration} : {}), return_url: `${config.appUrl}?billing=managed` });
       return { url: session.url };
     });
   }
@@ -250,7 +267,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     });
   }
   async function webhook(event) {
-    if (event.livemode !== false) throw new BillingError('TEST_MODE_REQUIRED',400);
+    if (event.livemode !== liveMode) throw new BillingError(liveMode ? 'LIVE_MODE_REQUIRED' : 'TEST_MODE_REQUIRED',400);
     const supported=/^(customer\.subscription\.|invoice\.|checkout\.session\.)/.test(event.type);
     if (!supported) return { ignored: true };
     const customer=idOf(event.data.object.customer);
@@ -275,7 +292,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
       return output;
     });
   }
-  return { issueIosHandoff, redeemIosHandoff, entitlement,details,price,checkout,portal,reconcile,webhook,exportFarm,
+  return { refreshEntitlement, issueIosHandoff, redeemIosHandoff, entitlement,details,price,checkout,portal,reconcile,webhook,exportFarm,
     async reconcileAll() {
       const farms=(await db.query('select farm_id from private.farm_subscriptions union select farm_id from private.billing_cancellation_outbox where completed_at is null')).rows;
       const results=[];

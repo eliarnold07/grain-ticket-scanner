@@ -17,7 +17,7 @@ export function registerBillingWebhook(app, getRuntime=billingRuntime) {
     let event;
     try { event=runtime.stripe.webhooks.constructEvent(req.body,req.get('stripe-signature'),runtime.config.webhookSecret); }
     catch { return res.status(400).json({code:'INVALID_SIGNATURE'}); }
-    if (event.livemode !== false) return res.status(400).json({code:'TEST_MODE_REQUIRED'});
+    if (event.livemode !== (runtime.config.mode === 'production')) return res.status(400).json({code:runtime.config.mode === 'production' ? 'LIVE_MODE_REQUIRED' : 'TEST_MODE_REQUIRED'});
     try { res.json(await runtime.service.webhook(event)); } catch(error) { failure(res,error); }
   });
 }
@@ -48,7 +48,7 @@ export function registerBillingRoutes(app,{account,getRuntime=billingRuntime,exp
       res.json(await operation(runtime.service,actor,req,runtime.config));
     } catch(error) { failure(res,error); }
   });
-  route('get','status',async(service,a,_req,config)=>({entitlement:await service.entitlement(a.farm_id),can_manage:a.role==='admin',native_purchase_enabled:false,ios_handoff_enabled:config?.iosHandoff===true,...await service.details(a.farm_id,a.user_id)}));
+  route('get','status',async(service,a,_req,config)=>({entitlement:await (service.refreshEntitlement ? service.refreshEntitlement(a.farm_id,a.user_id) : service.entitlement(a.farm_id)),can_manage:a.role==='admin',native_purchase_enabled:false,ios_handoff_enabled:config?.iosHandoff===true,...await service.details(a.farm_id,a.user_id)}));
   route('get','price',service=>service.price());
   route('post','ios-handoff',(service,a,req,config)=>{
     if (!config?.iosHandoff || req.get('origin') !== 'binflow://localhost' || req.get('x-binflow-platform') !== 'ios') {

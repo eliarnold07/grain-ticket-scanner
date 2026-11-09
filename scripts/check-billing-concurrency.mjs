@@ -12,7 +12,7 @@ await withLocalPostgres(async([a,b,observer])=>{
   await observer.query("update private.billing_policy set mode='enforced',enforce_at=statement_timestamp()");
   let creates=0;let session;let subscriptions=[];
   const stripe={customers:{create:async()=>({id:'cus_race',livemode:false}),retrieve:async()=>({id:'cus_race',livemode:false})},
-    prices:{retrieve:async()=>({livemode:false,active:true,type:'recurring',unit_amount:2900,currency:'usd',recurring:{interval:'month',interval_count:1}})},
+    prices:{retrieve:async()=>({livemode:false,active:true,type:'recurring',unit_amount:2999,currency:'usd',recurring:{interval:'month',interval_count:1}})},
     subscriptions:{list:async()=>({data:subscriptions,has_more:false})},
     checkout:{sessions:{create:async()=>{creates++;await new Promise(r=>setTimeout(r,100));session={id:'cs_race',livemode:false,status:'open',url:'https://checkout.stripe.com/test',expires_at:Math.floor(Date.now()/1000)+3600};return session;},retrieve:async()=>session}}
   };

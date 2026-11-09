@@ -1,5 +1,7 @@
 > Local sandbox acceptance completed 2026-11-02 using the existing USD 29.99/month product. See BILLING-HANDOFF.md for verified results and running services. Do not replay bootstrap against the initialized local database.
 
+Current release preparation adds explicit production mode and a release approval gate. See [Production billing release procedure](PRODUCTION-BILLING-RELEASE.md). The local/staging-only statements below describe the original foundation and historical test evidence. No production activation is authorized.
+
 # Farm billing foundation — local implementation and handoff
 
 Updated November 2, 2026. **Local, uncommitted, unpublished; not approved for release.**
@@ -55,14 +57,14 @@ access until the paid/trial end; immediate cancellation restricts immediately.
 Account deletion and exports do not depend on payment or contacting Stripe.
 Database outages can still make exports unavailable; no data is deleted on failure.
 
-The starting offer is **$29/month per farm**, a **30-day trial**, and collection of
+The final offer is **$29.99/month or $299.99/year per farm**, a **30-day trial**, and collection of
 a payment method before enrollment. This supersedes the old shared-context price
 proposal. Actual price/currency comes from `STRIPE_PRICE_ID`, not entitlement logic.
 Each subscription records its own price ID, permitting later price changes without
 automatically moving existing customers. Tier-specific feature mapping is future work.
 
-Trial time is reserved server-side when Checkout begins. Abandoning Checkout does
-not reset the clock. A stable HMAC of normalized verified email survives account
+Trial eligibility is reserved server-side when Checkout begins. Abandoning Checkout does
+not start or consume trial days. Stripe starts the full 30-day trial at actual subscription creation. A stable HMAC of normalized verified email survives account
 deletion and prevents the same identity obtaining another trial. The farm also
 retains its trial dates. Different new email identities are not proof of the same
 real-world farm: stronger abuse detection requires a deliberate business/privacy
