@@ -2,6 +2,10 @@
 
 This branch starts from staging commit `b74ad9676773945f2bccd82110175303ab45316c`. The U.S. checkout branch preserves the tested iOS preparation at `864da5f1e9297ee293f179d0906f8c4b05ebb247`. The native project comes from the reviewed `feature/ios-app-store` revision `07fa6496bdbfe526793ab6d37c71c6fb25a44360`. Staging already has the camera and ticket-flow polish. This branch keeps the bundle identifier, icons, camera/photo permissions, scene lifecycle, SwiftPM dependencies, and automatic signing. It sets the marketing version to 1.1 and the proposed build number to 2.
 
+## Coordinated launch decision
+
+All existing and new customers remain free until one approved paid launch after physical-device testing, iOS 1.1 App Store approval and production readiness. No customer billing UI is exposed beforehand. BILLING_CUSTOMER_UI_ENABLED defaults false. Staging testers can explicitly opt in with sandbox credentials. Production UI and Checkout additionally require coordinated database launch readiness and active enforcement. Preserve reviewer access throughout review and disclose the gated purchase flow in Review Notes.
+
 ## Release gates
 
 - Finish the current 1.0 review and verify its status before creating the 1.1 submission. Use a separate checkout from any Mac work in progress. Review Mac-local native and signing differences before discarding or replacing any of them.

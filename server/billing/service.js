@@ -26,6 +26,14 @@ export function subscriptionSnapshot(s, previous = {}, now = new Date(), liveMod
 
 export function createBillingService({ db, stripe, config, now = () => new Date() }) {
   const liveMode = config.mode === 'production';
+  async function customerFacingBillingEnabled() {
+    if (config.customerFacingBilling !== true) return false;
+    if (config.mode !== 'production') return true;
+    return (await db.query('select private.billing_customer_launch_ready() as ready')).rows[0]?.ready === true;
+  }
+  async function requireCustomerBilling() {
+    if (!await customerFacingBillingEnabled()) throw new BillingError('BILLING_NOT_LAUNCHED', 404);
+  }
   async function locked(tx, farmId, actor, admin = true) {
     const hosted = ['staging','production'].includes(config.mode);
     const lockSql = hosted
@@ -127,6 +135,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     return quote;
   }
   async function issueIosHandoff(farmId, actor) {
+    await requireCustomerBilling();
     await iosPrice();
     const token = randomBytes(32).toString('base64url');
     await db.transaction(async tx => {
@@ -142,6 +151,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     return { url: `${config.appUrl}?billing=ios-handoff#${token}` };
   }
   async function redeemIosHandoff(token, interval) {
+    await requireCustomerBilling();
     if (!['month', 'year'].includes(interval)) throw new BillingError('INVALID_PLAN', 400);
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new BillingError('HANDOFF_INVALID', 410);
     const handoff = (await db.query(`delete from private.billing_ios_handoffs
@@ -157,6 +167,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     throw new BillingError('CHECKOUT_CHANGED');
   }
   async function checkout(farmId, actor, interval = 'month', iosHandoff = false) {
+    await requireCustomerBilling();
     if (!['month', 'year'].includes(interval)) throw new BillingError('INVALID_PLAN', 400);
     const successUrl = `${config.appUrl}?billing=${iosHandoff ? 'ios-returned' : 'returned'}`;
     const cancelUrl = `${config.appUrl}?billing=${iosHandoff ? 'ios-canceled' : 'canceled'}`;
@@ -237,6 +248,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
     });
   }
   async function portal(farmId, actor) {
+    await requireCustomerBilling();
     return db.transaction(async tx => {
       await locked(tx,farmId,actor);
       const s=await row(tx,farmId);
@@ -292,7 +304,7 @@ export function createBillingService({ db, stripe, config, now = () => new Date(
       return output;
     });
   }
-  return { refreshEntitlement, issueIosHandoff, redeemIosHandoff, entitlement,details,price,checkout,portal,reconcile,webhook,exportFarm,
+  return { customerFacingBillingEnabled, refreshEntitlement, issueIosHandoff, redeemIosHandoff, entitlement,details,price,checkout,portal,reconcile,webhook,exportFarm,
     async reconcileAll() {
       const farms=(await db.query('select farm_id from private.farm_subscriptions union select farm_id from private.billing_cancellation_outbox where completed_at is null')).rows;
       const results=[];

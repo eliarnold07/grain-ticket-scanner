@@ -11,7 +11,7 @@ const appUrl='https://binflow-staging.pages.dev/app/';
 const origin=new URL(appUrl).origin;
 const priceId='price_month';
 const annualPriceId='price_annual';
-const config={iosHandoff:true,appUrl,priceId,annualPriceId,trialDays:30,identitySecret:'test'.repeat(12)};
+const config={customerFacingBilling:true,iosHandoff:true,appUrl,priceId,annualPriceId,trialDays:30,identitySecret:'test'.repeat(12)};
 const tokenOf=result=>new URL(result.url).hash.slice(1);
 
 test('iOS purchase offer fails closed by actual storefront, role, flag and plan availability',()=>{
@@ -81,6 +81,7 @@ test('SQL handoff is one-use, bound to the original farm, and does not grant acc
 test('HTTP issuance requires iOS origin and admin; browser redemption accepts only the configured web origin',async t=>{
   const calls=[];
   const runtime={config:{...config},service:{
+    customerFacingBillingEnabled:async()=>true,
     issueIosHandoff:async (...args)=>{calls.push(args);return {ok:true};},
     redeemIosHandoff:async (...args)=>{calls.push(args);return {ok:true};}
   }};

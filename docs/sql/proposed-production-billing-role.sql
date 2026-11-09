@@ -47,4 +47,5 @@ create policy billing_stage_outbox_update on private.billing_cancellation_outbox
 grant select, insert, update, delete on private.billing_ios_handoffs to binflow_billing_prod;
 create policy ios_handoffs_prod on private.billing_ios_handoffs for all to binflow_billing_prod
   using (true) with check (true);
+grant execute on function private.billing_customer_launch_ready() to binflow_billing_prod;
 commit;

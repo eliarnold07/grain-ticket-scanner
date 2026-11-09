@@ -14,7 +14,7 @@ import { billingFixture, admin, employee } from './billingFixture.js';
 
 const token=(role,ref=BILLING_PRODUCTION_REF)=>'fixture.'+Buffer.from(JSON.stringify({role,ref,iss:'supabase',exp:4102444800})).toString('base64url')+'.fixture';
 const env={
-  BILLING_ENVIRONMENT:'production', BILLING_PRODUCTION_APPROVED:'true',
+  BILLING_ENVIRONMENT:'production', BILLING_PRODUCTION_APPROVED:'true', BILLING_ENABLED:'true', BILLING_CUSTOMER_UI_ENABLED:'true',
   BILLING_DATABASE_URL:`postgres://${BILLING_PRODUCTION_ROLE}:fixture@db.${BILLING_PRODUCTION_REF}.supabase.co:5432/postgres`,
   SUPABASE_URL:`https://${BILLING_PRODUCTION_REF}.supabase.co`, SUPABASE_ANON_KEY:token('anon'), SUPABASE_SERVICE_ROLE_KEY:token('service_role'),
   STRIPE_SECRET_KEY:'sk_live_fixture', STRIPE_WEBHOOK_SECRET:'whsec_fixture', STRIPE_PRICE_ID:'price_month', STRIPE_ANNUAL_PRICE_ID:'price_year',
@@ -39,6 +39,7 @@ test('production configuration is explicit, pinned, live-only and rejects mixed 
 
 test('production role shares the restricted hosted helper protocol without enforcement or Auth access',async t=>{
   const {db,farm}=await billingFixture();t.after(()=>db.close());
+  await db.exec(await readFile('supabase/migrations/20261109120000_billing_release_gate.sql','utf8'));
   await db.exec(await readFile('docs/sql/proposed-production-billing-role.sql','utf8'));
   await db.exec('set role binflow_billing_prod');
   assert.equal((await db.query('select * from private.billing_stage_lock_farm($1)',[farm])).rows[0].id,farm);
@@ -57,7 +58,7 @@ test('release gate preserves old-client access until native approval and explici
   const {db,farm,otherFarm}=await billingFixture();t.after(()=>db.close());
   await db.exec(await readFile('supabase/migrations/20261109120000_billing_release_gate.sql','utf8'));
   await assert.rejects(db.exec("update private.billing_policy set mode='enforced',enforce_at=now()"),/BILLING_RELEASE_APPROVAL_REQUIRED/);
-  await db.exec("update private.billing_release_gate set native_release_approved=true,legacy_client_plan_approved=true,legacy_cutoff=now(),approved_by='fixture owner',review_note='Fixture native release acceptance',reviewed_at=now()");
+  await db.exec("update private.billing_release_gate set coordinated_launch_approved=true,native_release_approved=true,legacy_client_plan_approved=true,legacy_cutoff=now(),approved_by='fixture owner',review_note='Fixture native release acceptance',reviewed_at=now()");
   await assert.rejects(db.exec("update private.billing_policy set mode='enforced',enforce_at=now()"),/BILLING_EXISTING_FARM_COVERAGE_REQUIRED/);
   await db.query("insert into private.billing_access_grants(farm_id,kind,ends_at,reason,authorized_by) values($1,'migration',now()+interval '30 days','Fixture existing customer coverage','fixture'),($2,'review',now()+interval '30 days','Fixture reviewer coverage','fixture')",[farm,otherFarm]);
   await db.exec("update private.billing_policy set mode='enforced',enforce_at=now()");
@@ -81,6 +82,7 @@ test('release gate preserves old-client access until native approval and explici
 
 test('production service handles live trial, missed renewal, replay, payment failure and cancellation with sandbox fixtures',async t=>{
   const {db,farm}=await billingFixture();t.after(()=>db.close());
+  await db.exec(await readFile('supabase/migrations/20261109120000_billing_release_gate.sql','utf8'));
   await db.exec(await readFile('docs/sql/proposed-production-billing-role.sql','utf8'));
   let current,customerCalls=0;
   const now=()=>Math.floor(Date.now()/1000);
@@ -91,6 +93,7 @@ test('production service handles live trial, missed renewal, replay, payment fai
     subscriptions:{list:async()=>({data:current?[current]:[],has_more:false})},
     billingPortal:{sessions:{create:async body=>{assert.equal(body.configuration,'bpc_fixture');return {url:'https://billing.stripe.com/fixture'};}}}
   };
+  await db.exec("update private.billing_release_gate set coordinated_launch_approved=true,native_release_approved=true,legacy_client_plan_approved=true,legacy_cutoff='1900-01-01',approved_by='fixture',review_note='Coordinated fixture launch',reviewed_at=now(); update private.billing_policy set mode='enforced',enforce_at=now()");
   const service=createBillingService({db,stripe,config:billingConfig(env)});
   assert.equal((await service.price()).annual.amount,29999);
   await assert.rejects(service.checkout(farm,employee),/BILLING_ADMIN_REQUIRED/);
@@ -181,15 +184,18 @@ test('release gate migration and disabled rollback preserve subscription, trial 
     claims:(await db.query('select * from private.billing_trial_claims order by identity_hash')).rows
   });
   const before=await snapshot();
+  const originalApi=(await db.query("select pg_get_functiondef('private.billing_api_entitlement(uuid,uuid)'::regprocedure) as definition")).rows[0].definition;
   await db.exec(await readFile('supabase/migrations/20261109120000_billing_release_gate.sql','utf8'));
   assert.deepEqual(await snapshot(),before);
   await db.exec(await readFile('docs/sql/billing-production-readiness.sql','utf8'));
+  await db.exec(originalApi);
   await db.exec(`update private.billing_policy set mode='disabled',enforce_at=null;
     drop trigger billing_release_gate_check on private.billing_policy;
     drop trigger billing_policy_release_audit on private.billing_policy;
     drop trigger billing_gate_release_audit on private.billing_release_gate;
     drop function private.billing_check_release_gate();
     drop function private.billing_audit_release_change();
+    drop function private.billing_customer_launch_ready();
     drop table private.billing_release_gate;`);
   assert.deepEqual(await snapshot(),before);
   assert.deepEqual((await db.query('select mode,enforce_at from private.billing_policy')).rows,[{mode:'disabled',enforce_at:null}]);

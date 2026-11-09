@@ -1,3 +1,9 @@
+export function customerBillingUiEnabled(env = process.env) {
+  const value = env.BILLING_CUSTOMER_UI_ENABLED ?? 'false';
+  if (!['true','false'].includes(value)) throw new Error('Invalid BILLING_CUSTOMER_UI_ENABLED');
+  return value === 'true' && billingEnabled(env);
+}
+
 export function billingEnabled(env = process.env) {
   if (!['', 'false', 'true'].includes(env.BILLING_ENABLED || '')) throw new Error('Invalid BILLING_ENABLED');
   return env.BILLING_ENABLED === 'true';
@@ -108,6 +114,6 @@ export function billingConfig(env = process.env) {
   if (trialDays !== 30) throw new Error('BinFlow requires a full 30-day trial');
   const iosHandoff = env.BILLING_IOS_HANDOFF_ENABLED ?? 'false';
   if (!['true', 'false'].includes(iosHandoff)) throw new Error('Invalid BILLING_IOS_HANDOFF_ENABLED');
-  return { liveMode, portalConfiguration: env.STRIPE_PORTAL_CONFIGURATION_ID, databaseRole: mode === 'production' ? BILLING_PRODUCTION_ROLE : BILLING_STAGING_ROLE, iosHandoff: iosHandoff === 'true', mode, databaseUrl: database.href, secret: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+  return { customerFacingBilling: customerBillingUiEnabled(env), liveMode, portalConfiguration: env.STRIPE_PORTAL_CONFIGURATION_ID, databaseRole: mode === 'production' ? BILLING_PRODUCTION_ROLE : BILLING_STAGING_ROLE, iosHandoff: iosHandoff === 'true', mode, databaseUrl: database.href, secret: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET,
     priceId: env.STRIPE_PRICE_ID, annualPriceId: env.STRIPE_ANNUAL_PRICE_ID, identitySecret: env.BILLING_TRIAL_IDENTITY_SECRET, trialDays, appUrl: appUrl.href };
 }

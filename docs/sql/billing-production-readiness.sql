@@ -4,7 +4,7 @@ select current_database() as database, current_user as operator,
        (select ssl from pg_stat_ssl where pid=pg_backend_pid()) as tls,
        (select version from pg_stat_ssl where pid=pg_backend_pid()) as tls_version;
 select mode,enforce_at,grace_days,freshness_hours from private.billing_policy;
-select native_release_approved,legacy_client_plan_approved,legacy_cutoff,
+select coordinated_launch_approved,native_release_approved,legacy_client_plan_approved,legacy_cutoff,
        approved_by,review_note,reviewed_at from private.billing_release_gate;
 select rolname,rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls
 from pg_roles where rolname='binflow_billing_prod';

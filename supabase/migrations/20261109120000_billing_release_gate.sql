@@ -4,6 +4,7 @@ begin;
 set local lock_timeout='5s';
 create table private.billing_release_gate (
   singleton boolean primary key default true check(singleton),
+  coordinated_launch_approved boolean not null default false,
   native_release_approved boolean not null default false,
   legacy_client_plan_approved boolean not null default false,
   legacy_cutoff timestamptz,
@@ -21,7 +22,7 @@ declare gate private.billing_release_gate;
 begin
   if new.mode='enforced' and new.enforce_at is not null then
     select * into gate from private.billing_release_gate where singleton;
-    if not found or not gate.native_release_approved or not gate.legacy_client_plan_approved or gate.legacy_cutoff is null
+    if not found or not gate.coordinated_launch_approved or not gate.native_release_approved or not gate.legacy_client_plan_approved or gate.legacy_cutoff is null
       or gate.reviewed_at is null or length(trim(coalesce(gate.approved_by,'')))=0
       or length(trim(coalesce(gate.review_note,'')))<10 then
       raise exception 'BILLING_RELEASE_APPROVAL_REQUIRED';
@@ -63,4 +64,26 @@ create trigger billing_policy_release_audit after update on private.billing_poli
 for each row when(old is distinct from new) execute function private.billing_audit_release_change();
 create trigger billing_gate_release_audit after update on private.billing_release_gate
 for each row when(old is distinct from new) execute function private.billing_audit_release_change();
+-- Presentation and payment creation follow the same approved launch boundary.
+create function private.billing_customer_launch_ready() returns boolean
+language sql stable security definer set search_path=pg_catalog as $$
+  select coalesce((select g.coordinated_launch_approved and g.native_release_approved
+    and g.legacy_client_plan_approved and p.mode='enforced'
+    and p.enforce_at is not null and p.enforce_at<=statement_timestamp()
+    from private.billing_release_gate g cross join private.billing_policy p
+    where g.singleton and p.singleton), false)
+$$;
+revoke all on function private.billing_customer_launch_ready() from public,anon,authenticated,service_role;
+
+create or replace function private.billing_api_entitlement(p_farm uuid,p_actor uuid) returns jsonb
+language plpgsql stable security definer set search_path=pg_catalog as $$
+begin
+  if coalesce(current_setting('request.jwt.claim.role',true),'')<>'service_role'
+    and coalesce(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'role','')<>'service_role'
+    then raise exception 'BILLING_SERVICE_REQUIRED'; end if;
+  if p_actor is not null and not exists(select 1 from public.farm_accounts where user_id=p_actor and farm_id=p_farm)
+    then raise exception 'FARM_MEMBERSHIP_CHANGED'; end if;
+  return private.billing_entitlement(p_farm) ||
+    jsonb_build_object('customer_billing_enabled',private.billing_customer_launch_ready());
+end $$;
 commit;

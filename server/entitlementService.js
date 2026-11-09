@@ -1,5 +1,5 @@
 import { billingRuntime } from './billing/runtime.js';
-import { billingEnabled } from './billing/config.js';
+import { billingEnabled, billingEnvironment, customerBillingUiEnabled } from './billing/config.js';
 import { farmFeatureRpc, currentAccount } from './supabaseStore.js';
 
 export function billingEnforcementMode() {
@@ -20,14 +20,15 @@ export async function resolveFarmEntitlement(farmId, { rpc=farmFeatureRpc, actor
         // Re-read the database, which stays authoritative for grants and policy.
         return resolveFarmEntitlement(farmId, {rpc,actor,configured,providerEnabled,legacyEnforced,refreshing:true});
       }
-      return result;
+      return {...result, billing_ui_enabled:customerBillingUiEnabled() &&
+        (billingEnvironment() !== 'production' || (result.customer_billing_enabled === true && result.enforcement_mode === 'enforced'))};
     } catch(error) {
       if (error.code!=='PGRST202' || providerEnabled || legacyEnforced) throw error;
     }
   } else if(providerEnabled || legacyEnforced) {
     throw new Error('Billing enforcement requires the application database');
   }
-  return {farm_id:farmId||null,enforcement_mode:'disabled',status:'not_configured',source:'none',has_access:null,access_level:'unverified',features:{},valid_until:null};
+  return {farm_id:farmId||null,enforcement_mode:'disabled',status:'not_configured',source:'none',has_access:null,billing_ui_enabled:false,access_level:'unverified',features:{},valid_until:null};
 }
 export const getFarmEntitlement=farmId=>resolveFarmEntitlement(farmId);
 export const recoveryRoutes=new Set([

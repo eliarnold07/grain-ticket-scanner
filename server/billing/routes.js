@@ -2,7 +2,7 @@ import express from 'express';
 import { BillingError } from './service.js';
 import { billingRuntime } from './runtime.js';
 import { farmFeatureRpc } from '../supabaseStore.js';
-const safeCodes=new Set(['INVALID_PLAN','PLAN_UNAVAILABLE','CHECKOUT_PLAN_PENDING','BILLING_ADMIN_REQUIRED','CONFIRMED_EMAIL_REQUIRED','USE_BILLING_PORTAL','PAYMENT_PROCESSING','NO_BILLING_CUSTOMER','CHECKOUT_RECONCILIATION_REQUIRED','CHECKOUT_CHANGED','FARM_ARCHIVED','HANDOFF_INVALID','FARM_NOT_FOUND']);
+const safeCodes=new Set(['INVALID_PLAN','PLAN_UNAVAILABLE','CHECKOUT_PLAN_PENDING','BILLING_ADMIN_REQUIRED','CONFIRMED_EMAIL_REQUIRED','USE_BILLING_PORTAL','PAYMENT_PROCESSING','NO_BILLING_CUSTOMER','CHECKOUT_RECONCILIATION_REQUIRED','CHECKOUT_CHANGED','FARM_ARCHIVED','HANDOFF_INVALID','FARM_NOT_FOUND','BILLING_NOT_LAUNCHED']);
 function failure(res,error) {
   const known=error instanceof BillingError && safeCodes.has(error.code);
   return res.status(known ? error.status : 503).json({code:known ? error.code : 'BILLING_UNAVAILABLE',error:'Billing could not complete this request. Your farm records are safe. Please try again.'});
@@ -22,11 +22,18 @@ export function registerBillingWebhook(app, getRuntime=billingRuntime) {
   });
 }
 export function registerIosHandoffRedemption(app, getRuntime=billingRuntime) {
+  app.get('/api/billing/availability', async (_req,res) => {
+    res.set('Cache-Control','no-store');
+    try {
+      const runtime=getRuntime();
+      res.json({billing_ui_enabled:Boolean(runtime && await runtime.service.customerFacingBillingEnabled())});
+    } catch { res.status(503).json({billing_ui_enabled:false}); }
+  });
   app.post('/api/billing/ios-handoff/redeem', express.json({limit:'1kb'}), async (req,res) => {
     res.set('Cache-Control','no-store');
     try {
       const runtime = getRuntime();
-      if (!runtime?.config.iosHandoff) return res.status(404).json({code:'HANDOFF_INVALID'});
+      if (!runtime?.config.iosHandoff || !await runtime.service.customerFacingBillingEnabled()) return res.status(404).json({code:'HANDOFF_INVALID'});
       if (req.get('origin') !== new URL(runtime.config.appUrl).origin) return res.status(403).json({code:'HANDOFF_INVALID'});
       const result = await runtime.service.redeemIosHandoff(req.body?.token, req.body?.interval);
       res.json(result);
@@ -44,11 +51,21 @@ export function registerBillingRoutes(app,{account,getRuntime=billingRuntime,exp
       if (path==='export') return res.json(await exportData(actor));
       const runtime=getRuntime();
       if (!runtime) return res.status(503).json({code:'BILLING_DISABLED'});
+      if (['checkout','portal','ios-handoff','price'].includes(path) && !await runtime.service.customerFacingBillingEnabled()) {
+        throw new BillingError('BILLING_NOT_LAUNCHED',404);
+      }
       if (['checkout','portal'].includes(path) && (/^(capacitor|binflow):/.test(req.get('origin')||'') || req.get('x-binflow-platform') !== 'web')) return res.status(403).json({code:'NATIVE_PURCHASE_DISABLED'});
       res.json(await operation(runtime.service,actor,req,runtime.config));
     } catch(error) { failure(res,error); }
   });
-  route('get','status',async(service,a,_req,config)=>({entitlement:await (service.refreshEntitlement ? service.refreshEntitlement(a.farm_id,a.user_id) : service.entitlement(a.farm_id)),can_manage:a.role==='admin',native_purchase_enabled:false,ios_handoff_enabled:config?.iosHandoff===true,...await service.details(a.farm_id,a.user_id)}));
+  route('get','status',async(service,a,_req,config)=>{
+    const visible=await service.customerFacingBillingEnabled();
+    const entitlement=await (service.refreshEntitlement ? service.refreshEntitlement(a.farm_id,a.user_id) : service.entitlement(a.farm_id));
+    const details=await service.details(a.farm_id,a.user_id);
+    return {...details,entitlement:{...entitlement,billing_ui_enabled:visible},billing_ui_enabled:visible,
+      can_manage:a.role==='admin',can_checkout:visible && details.can_checkout,can_portal:visible && details.can_portal,
+      native_purchase_enabled:false,ios_handoff_enabled:visible && config?.iosHandoff===true};
+  });
   route('get','price',service=>service.price());
   route('post','ios-handoff',(service,a,req,config)=>{
     if (!config?.iosHandoff || req.get('origin') !== 'binflow://localhost' || req.get('x-binflow-platform') !== 'ios') {

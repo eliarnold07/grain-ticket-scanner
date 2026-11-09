@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { billingRestricted, billingPresentation, billingError } from './billingPresentation.js';
+import { billingRestricted, billingPresentation, billingError, billingUiVisible } from './billingPresentation.js';
 import { binFlowStorefront, canOfferIosCheckout, confirmedIosActivation } from './iosCheckout.js';
 import './billing.css';
 export { billingRestricted } from './billingPresentation.js';
@@ -12,7 +12,7 @@ export default function BillingSettings({ apiFetch, account, entitlement, onRefr
   const [iosReturn,setIosReturn] = useState(0);
   const lock=useRef(false), callbacks=useRef({apiFetch,onRefresh,onActivated});
   callbacks.current={apiFetch,onRefresh,onActivated};
-  const native=platform!=='web', admin=account.role==='admin', disabled=entitlement?.status==='not_configured', restricted=billingRestricted(entitlement);
+  const native=platform!=='web', admin=account.role==='admin', disabled=!billingUiVisible(entitlement)||entitlement?.status==='not_configured', restricted=billingRestricted(entitlement);
   const state=billingPresentation(entitlement || {});
   const iosOffer = canOfferIosCheckout({
     platform, storefront, role:account.role, enabled:details?.ios_handoff_enabled,
@@ -152,6 +152,7 @@ export default function BillingSettings({ apiFetch, account, entitlement, onRefr
   const actualAnnual = details?.plan_interval === 'year';
   const annualAvailable = Boolean(price?.annual);
   const planKnown = actualAnnual || details?.plan_interval === 'month';
+  if (!billingUiVisible(entitlement)) return null;
   return <section className="billing-view" aria-labelledby="billing-title">
     {onBack&&<button className="settings-back billing-back" onClick={onBack}>← Back to Settings</button>}
     <header className="billing-heading"><p className="billing-eyebrow">FARM SUBSCRIPTION</p><span className={`billing-badge billing-${waiting?'neutral':state.tone}`}>{waiting?'Confirming access':state.label}</span>

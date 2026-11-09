@@ -16,7 +16,7 @@ await withLocalPostgres(async([a,b,observer])=>{
     subscriptions:{list:async()=>({data:subscriptions,has_more:false})},
     checkout:{sessions:{create:async()=>{creates++;await new Promise(r=>setTimeout(r,100));session={id:'cs_race',livemode:false,status:'open',url:'https://checkout.stripe.com/test',expires_at:Math.floor(Date.now()/1000)+3600};return session;},retrieve:async()=>session}}
   };
-  const config={identitySecret:'x'.repeat(32),priceId:'price_race',trialDays:30,appUrl:'http://localhost:5173/app/'};
+  const config={customerFacingBilling:true,identitySecret:'x'.repeat(32),priceId:'price_race',trialDays:30,appUrl:'http://localhost:5173/app/'};
   const one=createBillingService({db:wrap(a),stripe,config});const two=createBillingService({db:wrap(b),stripe,config});
   const results=await Promise.all([one.checkout(farm,admin),two.checkout(farm,admin)]);
   assert.equal(creates,1);assert.deepEqual(results[0],results[1]);
