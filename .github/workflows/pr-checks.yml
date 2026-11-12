@@ -1,0 +1,33 @@
+name: BinFlow PR checks
+
+on:
+  pull_request:
+    branches:
+      - staging
+      - develop
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binflow-pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: BinFlow test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.16.0
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run build -- --base=/

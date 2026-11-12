@@ -8,6 +8,8 @@ import SavedNamesSettings from './SavedNamesSettings.jsx';
 import FarmInvitationSettings from './FarmInvitationSettings.jsx';
 import JoinFarm from './JoinFarm.jsx';
 import TicketPhotoCapture from './TicketPhotoCapture.jsx';
+import ContractAppliedTickets from './ContractAppliedTickets.jsx';
+import { isArchivedTicket } from '../server/archivePolicy.js';
 import useScannerData from './useScannerData.js';
 import { fetchWithTimeout, readJsonWithTimeout, withDeadline } from './network.js';
 import { missingTicketFields, ticketBushels as parseTicketBushels } from './ticketReview.js';
@@ -308,6 +310,7 @@ function App() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [ticketLogs, setTicketLogs] = useState([]);
   const [contracts, setContracts] = useState([]);
+  const contractsLoadRef = useRef(0);
   const [showArchivedContracts, setShowArchivedContracts] = useState(false);
   const [showArchivedTickets, setShowArchivedTickets] = useState(false);
   const [farmUsers, setFarmUsers] = useState([]);
@@ -728,14 +731,18 @@ function App() {
   }
 
   async function loadContracts(options = {}) {
+    const requestId = ++contractsLoadRef.current;
     try {
       const archived = options.archived ?? showArchivedContracts;
-      const response = await apiFetch(`/api/contracts${archived ? '?archived=true' : ''}`);
+      const params = new URLSearchParams();
+      if (archived) params.set('archived', 'true');
+      if (options.ticketCounts || activeView === 'contracts') params.set('ticket_counts', 'true');
+      const response = await apiFetch(`/api/contracts${params.size ? `?${params}` : ''}`);
       if (!response.ok) throw new Error(await readErrorResponse(response));
       const data = await response.json();
-      setContracts(data.contracts || []);
+      if (requestId === contractsLoadRef.current) setContracts(data.contracts || []);
     } catch (error) {
-      if (!options.silent) reportError(error);
+      if (!options.silent && requestId === contractsLoadRef.current) reportError(error);
     }
   }
 
@@ -1996,7 +2003,7 @@ function App() {
           type="button"
           onClick={() => {
             setActiveView('contracts');
-            loadContracts();
+            loadContracts({ ticketCounts: true });
           }}
         >
           Contracts
@@ -2046,7 +2053,10 @@ function App() {
               <button className="scan-action" type="button" onClick={() => setActiveView('scanner')}>Scan New Ticket</button>
               <button type="button" onClick={() => setActiveView('inventory')}>Manage Bins</button>
               <button type="button" onClick={() => setActiveView('history')}>View Logs</button>
-              <button type="button" onClick={() => setActiveView('contracts')}>Manage Contracts</button>
+              <button type="button" onClick={() => {
+                setActiveView('contracts');
+                loadContracts({ ticketCounts: true });
+              }}>Manage Contracts</button>
             </div>
           </div>
 
@@ -2640,6 +2650,14 @@ function App() {
                   </div>
                   <div className="capacity-bar"><span style={{ width: `${progress}%` }} /></div>
                   <p className="contract-window">{displayValue(contract.delivery_window)} · {displayValue(contract.notes)}</p>
+                  <ContractAppliedTickets contract={contract} apiFetch={apiFetch} formatNumber={formatNumber}
+                    onOpenTicket={(ticket) => {
+                      const archived = isArchivedTicket(ticket);
+                      setActiveView('history');
+                      setShowArchivedTickets(archived);
+                      loadTicketHistory({ archived });
+                      startEditingTicket(ticket);
+                    }} />
                   <div className="inventory-actions">
                     <button type="button" onClick={() => startEditingContract(contract)}>Edit</button>
                     {!showArchivedContracts && (

@@ -30,6 +30,8 @@ import {
   getTicketLogSnapshot,
   listBins,
   listContracts,
+  listContractTickets,
+  listContractTicketCounts,
   listDrivers,
   listLocations,
   listFarmUsers,
@@ -540,13 +542,30 @@ app.delete('/api/ticket-logs/:id', async (req, res) => {
 
 app.get('/api/contracts', async (_req, res) => {
   try {
-    const ticketLogs = await getTicketLogSnapshot();
-    res.json({ contracts: await listContracts(ticketLogs, {
-      includeArchived: String(_req.query.archived || '').toLowerCase() === 'true'
-    }) });
+    const includeArchived = String(_req.query.archived || '').toLowerCase() === 'true';
+    const [contracts, counts] = await Promise.all([
+      listContracts(null, { includeArchived }),
+      _req.query.ticket_counts === 'true' ? listContractTicketCounts() : null
+    ]);
+    res.json({ contracts: counts ? contracts.map(contract => ({
+      ...contract, applied_ticket_count: counts.get(contract.id) ?? 0
+    })) : contracts });
   } catch (error) {
     logError('Contract fetch failed', error);
     res.status(500).json({ error: 'Could not load contracts.', detail: error.message });
+  }
+});
+
+app.get('/api/contracts/:id/tickets', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const result = await listContractTickets(req.params.id);
+    if (!result) return res.status(404).json({ error: 'Contract not found.' });
+    res.json(result);
+  } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: 'Invalid contract ID.' });
+    logError('Applied tickets fetch failed', error);
+    res.status(500).json({ error: 'Could not load applied tickets.' });
   }
 });
 
