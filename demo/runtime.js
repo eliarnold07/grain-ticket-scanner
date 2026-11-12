@@ -1,6 +1,7 @@
 // All demo data and requests stay in memory. There is deliberately no fetch fallback.
 export { readJsonWithTimeout, withDeadline } from '../src/network.js';
 import { applyBinTransaction, clampBinBalance } from '../server/binCapacity.js';
+import { countContractTickets, summarizeContractTickets } from '../server/contractTickets.js';
 const session = { access_token: 'fictional-demo-session', user: { id: 'demo-owner', email: 'alex@example.com' } };
 export const getStoredSession = () => session;
 export const isSessionExpired = () => false;
@@ -26,10 +27,11 @@ const contracts = [
   { id: 'contract-corn', contract_id: 'C-2026-01', buyer: 'Riverbend Grain', commodity: 'Corn', contracted_bushels: 10000, contract_price: 4.8, delivery_window: 'Fall 2026', status: 'Open', notes: 'Fictional delivery contract' },
   { id: 'contract-soy', contract_id: 'S-2026-01', buyer: 'Meadowbrook Processing', commodity: 'Beans', contracted_bushels: 5000, contract_price: 12, delivery_window: 'Fall 2026', status: 'Open', notes: '' }
 ];
-const tickets = [1000, 1200, 800, 1000, 700, 600, 500].map((bushels, i) => {
-  const soy = i > 3, paid = i === 0 || i === 3 || i === 6, partial = i === 4;
+const tickets = [1000, 1200, 800, 1000, 700, 600, 500, 450, 550, 625, 725, 800].map((bushels, i) => {
+  const soy = i >= 4 && i <= 6, paid = i === 0 || i === 3 || i === 6, partial = i === 4;
+  const delivered = date(i < 7 ? 7 - i : i + 1);
   const price = soy ? 12 : 4.8;
-  return { id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`, ticket_number: `SAMPLE-${1001 + i}`, date: date(7 - i), created_at: `${date(7 - i)}T15:00:00Z`, crop: soy ? 'Beans' : 'Corn', bushels,
+  return { id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`, ticket_number: `SAMPLE-${1001 + i}`, date: delivered, created_at: `${delivered}T15:00:00Z`, crop: soy ? 'Beans' : 'Corn', bushels,
     hauled_from: soy ? 'Soybean Bin' : i % 2 ? 'West Bin' : 'North Bin', delivered_to: soy ? 'Meadowbrook Processing' : 'Riverbend Grain', hauled_by: i % 2 ? 'Jordan Lee' : 'Alex Morgan', moisture: soy ? 12.4 : 15.2,
     net_weight: bushels * (soy ? 60 : 56), gross_weight: bushels * (soy ? 60 : 56) + 28000, tare_weight: 28000, price, revenue: bushels * price,
     assignment_status: i === 5 ? 'Spot' : 'Contract', assignments: [{ type: i === 5 ? 'SPOT' : 'CONTRACT', contract_id: soy ? 'contract-soy' : 'contract-corn', bushels }],
@@ -101,8 +103,17 @@ export async function fetchWithTimeout(input, options = {}) {
     Object.assign(old, body); old.amount_received = Number(old.amount_received); old.revenue = Number(old.bushels) * Number(old.price);
     return reply({ ok: true, ticket: old });
   }
+  const appliedTickets = path.match(/^\/api\/contracts\/([^/]+)\/tickets$/);
+  if (appliedTickets && method === 'GET') {
+    const contract = contracts.find(item => item.id === appliedTickets[1]);
+    return contract ? reply(summarizeContractTickets(tickets, contract.id)) : reply({ error: 'Contract not found.' }, 404);
+  }
   if (path.startsWith('/api/contracts')) {
-    if (method === 'GET') return reply({ contracts: contractRows().filter(c => Boolean(c.archived) === (url.searchParams.get('archived') === 'true')) });
+    if (method === 'GET') {
+      const rows = contractRows().filter(c => Boolean(c.archived) === (url.searchParams.get('archived') === 'true'));
+      const counts = url.searchParams.get('ticket_counts') === 'true' ? countContractTickets(tickets) : null;
+      return reply({ contracts: counts ? rows.map(c => ({ ...c, applied_ticket_count: counts.get(c.id) ?? 0 })) : rows });
+    }
     const id = path.split('/')[3], index = contracts.findIndex(c => c.id === id);
     if (method === 'DELETE') { if (tickets.some(t => t.assignments.some(a => a.contract_id === id))) return fail('This sample contract has linked tickets.'); if (index >= 0) contracts.splice(index, 1); }
     else { const value = { ...(contracts[index] || {}), ...body }; if (!value.contract_id || !value.buyer || !(Number(value.contracted_bushels) > 0)) return fail('Enter a contract number, buyer, and positive bushels.'); value.contracted_bushels = Number(value.contracted_bushels); value.contract_price = Number(value.contract_price); if (index >= 0) contracts[index] = value; else contracts.push({ ...value, id: crypto.randomUUID() }); }
