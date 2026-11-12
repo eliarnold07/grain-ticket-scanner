@@ -59,6 +59,22 @@ test('invalid demo submissions leave grain unchanged; valid saves reconcile hist
   assert.equal(after.total_tickets_scanned, before.total_tickets_scanned + 1);
 });
 
+test('demo contract counts reflect assignments and the full drill-down total', async () => {
+  const runtime = await fresh();
+  const contracts = async () => (await request(runtime, 'contracts?ticket_counts=true')).data.contracts;
+  const detail = async () => (await request(runtime, 'contracts/contract-corn/tickets')).data;
+  const first = await detail();
+  assert.equal(first.tickets.length, 9);
+  assert.equal(first.total_applied_bushels, 7150);
+  assert.equal((await contracts()).find(c => c.id === 'contract-corn').applied_ticket_count, 9);
+  const { ticket, applied_bushels } = first.tickets[0];
+  assert.equal((await request(runtime, `ticket-logs/${ticket.id}`, {
+    assignments: [{ type: 'SPOT', bushels: ticket.bushels }]
+  }, 'PUT')).status, 200);
+  assert.equal((await contracts()).find(c => c.id === 'contract-corn').applied_ticket_count, 8);
+  assert.equal((await detail()).total_applied_bushels, 7150 - applied_bushels);
+});
+
 test('demo adjustments share production capacity behavior and reset with a fresh session', async () => {
   const runtime = await fresh();
   const result = await request(runtime, 'inventory-transactions', { bin_id: 'bin-corn-1', transaction_type: 'ADD_GRAIN', bushel_amount: 50000 });

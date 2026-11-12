@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
 import { AccountDeletionError, performAccountDeletion } from './accountDeletionService.js';
 import { clampBinBalance } from './binCapacity.js';
+import { readContractTicketCounts, readContractTickets } from './contractTickets.js';
 import { canonicalRestPath, requireUuid, restQuery } from './restQuery.js';
 
 const requestContext = new AsyncLocalStorage();
@@ -573,6 +574,14 @@ export async function deleteTicketLog(id) {
     p_actor: context().member.user_id, p_action: 'delete', p_id: requireUuid(id), p_input: {}, p_request: null
   });
   return result.deleted_ticket_log;
+}
+
+export function listContractTickets(id) {
+  return readContractTickets(db, context().farmId, id);
+}
+
+export function listContractTicketCounts() {
+  return readContractTicketCounts(db, context().farmId);
 }
 
 function contractWithBalances(contract, tickets) {
