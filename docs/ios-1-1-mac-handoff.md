@@ -1,6 +1,6 @@
 # BinFlow 1.1 Mac handoff
 
-This branch starts from staging commit `b74ad9676773945f2bccd82110175303ab45316c`. The U.S. checkout branch preserves the tested iOS preparation at `864da5f1e9297ee293f179d0906f8c4b05ebb247`. The native project comes from the reviewed `feature/ios-app-store` revision `07fa6496bdbfe526793ab6d37c71c6fb25a44360`. Staging already has the camera and ticket-flow polish. This branch keeps the bundle identifier, icons, camera/photo permissions, scene lifecycle, SwiftPM dependencies, and automatic signing. It sets the marketing version to 1.1 and the proposed build number to 2.
+The combined branch `codex/ios-11-dashboard-billing` starts at staging `a385d2dd59aeb578fe114219aa5f0187620365ef`. It incorporates live contract drill-down and upload dependency fixes from `d92dd85b165769642a5fba40cf8e921d8fc5ad50` and the tested web dashboard candidate `a1de5ddd1198ef69b8103e51352d51d19343e911`. The tested application tree is `c850f3e2998ebb3a098117c258e0b554d34a3831`. A later documentation-only commit updates this handoff. The U.S. checkout branch preserves the tested iOS preparation at `864da5f1e9297ee293f179d0906f8c4b05ebb247`. The native project comes from the reviewed `feature/ios-app-store` revision `07fa6496bdbfe526793ab6d37c71c6fb25a44360`. Staging already has the camera and ticket-flow polish. This branch keeps the bundle identifier, icons, camera/photo permissions, scene lifecycle, SwiftPM dependencies, and automatic signing. It sets the marketing version to 1.1 and the proposed build number to 2.
 
 ## Coordinated launch decision
 
@@ -8,7 +8,7 @@ All existing and new customers remain free until one approved paid launch after 
 
 ## Release gates
 
-- Finish the current 1.0 review and verify its status before creating the 1.1 submission. Use a separate checkout from any Mac work in progress. Review Mac-local native and signing differences before discarding or replacing any of them.
+- The Apple public U.S. lookup returned BinFlow 1.0 on November 12, 2026. Verify a clean 1.0 download and the intended storefront distribution in App Store Connect before submitting 1.1. Use a separate checkout from any Mac work in progress. Review Mac-local native and signing differences before discarding or replacing any of them.
 - Hosted staging handoff integration is complete at 6224cf3. The final production-readiness changes on this branch have not been deployed; obtain approval for their staging integration and regression acceptance before the final archive. Verify staging Auth, account deletion readiness, and fresh fixtures before testing.
 - Production billing support is prepared and remains off until approved. Follow docs/PRODUCTION-BILLING-RELEASE.md for the pinned runtime, least-privilege role, verified TLS, migration/recovery rehearsal, live Stripe configuration, reconciliation and enforcement approvals. Confirm the production API revision and old-client compatibility before App Review. Do not turn on enforcement as part of preparing an archive.
 - Resolve or explicitly review dependency audit findings before promoting the backend. Check the combined release against the latest `develop`, run CI, and pin the exact approved iOS SHA for archive.
@@ -23,11 +23,11 @@ Use Node **24.16.0** from `.node-version` and **Xcode 26 or newer with the iOS 2
 
 [Apple upload SDK requirements](https://developer.apple.com/news/upcoming-requirements/?id=04282026a)
 
-In a clean clone, fetch and check out the approved feature revision. Record the full SHA and confirm it matches the handoff before building.
+The tested commit is local. After an approved push, fetch the combined branch in a clean clone and check out the approved revision. Record the full SHA and confirm it matches the handoff before building.
 
 ```sh
 git fetch origin
-git switch --detach origin/codex/production-billing-readiness
+git switch --detach c850f3e2998ebb3a098117c258e0b554d34a3831
 git rev-parse HEAD
 git status --short
 node --version
@@ -85,7 +85,13 @@ If a candidate fails verification, stop before upload and rebuild from the last 
 
 Windows can verify the Git tree, dependency lock, app builds, Capacitor configuration, package paths, and generated web assets. The production-shaped offline build uses a synthetic public-key fixture for static verification only. Windows does not verify Xcode compilation, Swift package resolution, signed native asset sync, WKWebView lifecycle, physical camera/photo access, Files export, device signing, archive validation, TestFlight, or App Review.
 
-Verified on Windows with Node 24.16.0: automated Express and PostgreSQL fixture tests, the production web build, both mobile builds and asset checks, and staging and release-shaped asset copy into the native project. Read-only probes verified the existing staging API, Pages, restricted TLS database login, Stripe sandbox prices and webhook. The hosted staging handoff passed on staging 6224cf3 before this final production preparation. The new production runtime and release-gate migration require a separate reviewed rollout. Existing server dependency audit findings for `body-parser` and `multer` remain release gates.
+Verified on Windows with Node 24.16.0: automated Express and PostgreSQL fixture tests, the production web build, both mobile builds and asset checks, and staging and release-shaped asset copy into the native project. Read-only probes verified the existing staging API, Pages, restricted TLS database login, Stripe sandbox prices and webhook. The hosted staging handoff passed on staging 6224cf3 before this final production preparation. The new production runtime and release-gate migration require a separate reviewed rollout. The combined candidate inherits the live upload dependency fixes. Its production dependency audit reported zero vulnerabilities on November 12, 2026.
+
+## Combined dashboard and billing acceptance
+
+- The combined application tree passed 138 automated tests, the production web build, both offline mobile builds, and both web bundle scans. The mobile builds used synthetic project-bound public-key fixtures. Native sync and physical tests of this tree remain pending.
+- Apply the additive contract name migration only with the approved staging target and recovery point. The rollback-only hosted rehearsal passed. Test the actual combined API and frontend with the schema available before using this build on devices.
+- On iPhone and iPad, check the dashboard, friendly name and official number, ticket drill-down to History, split and reassigned deliveries, and old-client 1.0 compatibility. Use disposable farms for subscription trials, payments, cancellations, expiry and recovery. Confirm reviewer access and verify OCR with an approved staging credential.
 
 ## Hosted staging handoff release
 
