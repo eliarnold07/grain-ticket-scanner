@@ -12,6 +12,10 @@ import FarmInvitationSettings from './FarmInvitationSettings.jsx';
 import JoinFarm from './JoinFarm.jsx';
 import TicketPhotoCapture from './TicketPhotoCapture.jsx';
 import ContractAppliedTickets from './ContractAppliedTickets.jsx';
+import ContractPicker from './ContractPicker.jsx';
+import GrainPositionDashboard, { DashboardFeedback } from './GrainPositionDashboard.jsx';
+import { PAYMENT_REVIEW_FILTER } from './paymentReview.js';
+import { assignedContractIds, contractMatches, contractName, contractOptionLabel } from './contractNames.js';
 import { isArchivedTicket } from '../server/archivePolicy.js';
 import useScannerData from './useScannerData.js';
 import { fetchWithTimeout, readJsonWithTimeout, withDeadline } from './network.js';
@@ -56,6 +60,7 @@ const blankTransactionForm = {
 };
 const blankContractForm = {
   contract_id: '',
+  display_name: '',
   buyer: '',
   commodity: '',
   contracted_bushels: '',
@@ -203,6 +208,7 @@ function movementLabel(type) {
 
 function emptyDashboard() {
   return {
+    isPlaceholder: true,
     kpis: {
       total_corn_inventory: 0,
       total_bean_inventory: 0,
@@ -213,7 +219,6 @@ function emptyDashboard() {
     },
     finance: {
       unpaid_delivered_bushels: 0,
-      unpaid_estimated_dollars: 0,
       payments_received_this_month: 0,
       contracts_with_remaining_bushels: 0,
       unassigned_tickets: 0
@@ -335,6 +340,11 @@ function App() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [ticketLogs, setTicketLogs] = useState([]);
   const [contracts, setContracts] = useState([]);
+  const [contractSearch, setContractSearch] = useState('');
+  const [historyContractLabels, setHistoryContractLabels] = useState([]);
+  const contractLabels = useMemo(() => new Map([...historyContractLabels, ...contracts].map(contract => [contract.id, contract])),
+    [historyContractLabels, contracts]);
+  const visibleContracts = contracts.filter(contract => contractMatches(contract, contractSearch));
   const contractsLoadRef = useRef(0);
   const [showArchivedContracts, setShowArchivedContracts] = useState(false);
   const [showArchivedTickets, setShowArchivedTickets] = useState(false);
@@ -345,6 +355,7 @@ function App() {
   const [userStatus, setUserStatus] = useState('');
   const [changingMember, setChangingMember] = useState('');
   const [contractForm, setContractForm] = useState(blankContractForm);
+  const originalContractForm = useRef(null);
   const [editingContractId, setEditingContractId] = useState('');
   const [editingTicket, setEditingTicket] = useState(null);
   const [historySort, setHistorySort] = useState({ field: 'created_at', direction: 'desc' });
@@ -368,6 +379,7 @@ function App() {
     assignment_status: '',
     payment_status: ''
   });
+  const isPaymentReview = historyFilters.payment_status === PAYMENT_REVIEW_FILTER;
   const sortedTicketLogs = useMemo(() => {
     const direction = historySort.direction === 'asc' ? 1 : -1;
 
@@ -394,6 +406,7 @@ function App() {
     });
   }, [scannerContracts, ticket.crop]);
   const [dashboard, setDashboard] = useState(emptyDashboard);
+  const [dashboardLoadFailed, setDashboardLoadFailed] = useState(false);
 
   const isAuthenticated = Boolean(session?.access_token);
   const isAdmin = account?.role === 'admin';
@@ -643,6 +656,7 @@ function App() {
     setAuthForm(current => ({ ...current, password: '' }));
     setLocations([]);
     setFarmUsers([]); setTicketLogs([]); setBins([]); setContracts([]); setDrivers([]);
+    setHistoryContractLabels([]); setContractSearch('');
     resetScannerData();
     setDashboard(emptyDashboard());
     resetForNextTicket();
@@ -663,6 +677,8 @@ function App() {
     setFarmUsers([]);
     setUserStatus('');
     setTicketLogs([]);
+    setHistoryContractLabels([]);
+    setContractSearch('');
     setBins([]);
     setContracts([]);
     setDrivers([]);
@@ -703,20 +719,23 @@ function App() {
   }, [activeView, historyFilters, isAdmin, isAuthReady, isAuthenticated, showArchivedTickets]);
 
   async function loadDashboard(options = {}) {
+    setDashboardLoadFailed(false);
     if (!options.silent) {
       setIsLoadingDashboard(true);
     }
 
     try {
-      const response = await apiFetch('/api/dashboard');
+      const response = await apiFetch('/api/dashboard?grain_position=true');
 
       if (!response.ok) {
         throw new Error(await readErrorResponse(response));
       }
 
       const data = await response.json();
+      if (!data?.grain_position && !data?.kpis) throw new Error('Dashboard data is unavailable.');
       setDashboard(data);
     } catch (error) {
+      setDashboardLoadFailed(true);
       if (!options.silent) {
         reportError(error);
       }
@@ -733,6 +752,7 @@ function App() {
     }
 
     const params = new URLSearchParams();
+    params.set('contract_labels', 'true');
 
     for (const [key, value] of Object.entries(historyFilters)) {
       if (value.trim()) {
@@ -754,6 +774,7 @@ function App() {
 
       const data = await response.json();
       setTicketLogs(data.logs || []);
+      setHistoryContractLabels(data.contract_labels || []);
     } catch (error) {
       if (!options.silent) {
         reportError(error);
@@ -886,6 +907,8 @@ function App() {
     setAccount(null);
     setFarmUsers([]);
     setTicketLogs([]);
+    setHistoryContractLabels([]);
+    setContractSearch('');
     setBins([]);
     setContracts([]);
     setDrivers([]);
@@ -1001,6 +1024,7 @@ function App() {
       setTicketLogs((current) => current.map((ticketLog) => (
         ticketLog.id === log.id ? { ...ticketLog, ...data.ticket } : ticketLog
       )));
+      if (isPaymentReview) loadTicketHistory({ silent: true });
       loadDashboard({ silent: true });
       setStatus(`Ticket ${log.ticket_number || ''} marked ${paymentStatus.toLowerCase()}.`);
     } catch (error) {
@@ -1018,14 +1042,16 @@ function App() {
   }
 
   function resetContractForm() {
+    originalContractForm.current = null;
     setContractForm(blankContractForm);
     setEditingContractId('');
   }
 
   function startEditingContract(contract) {
     setEditingContractId(contract.id);
-    setContractForm({
+    const original = {
       contract_id: contract.contract_id,
+      display_name: contract.display_name || '',
       buyer: contract.buyer,
       commodity: contract.commodity,
       contracted_bushels: contract.contracted_bushels,
@@ -1033,18 +1059,24 @@ function App() {
       delivery_window: contract.delivery_window,
       status: contract.status,
       notes: contract.notes
-    });
+    };
+    originalContractForm.current = original;
+    setContractForm(original);
   }
 
   async function saveContract(event) {
     event.preventDefault();
     const editing = Boolean(editingContractId);
+    const original = originalContractForm.current;
+    const onlyNameChanged = editing && original && contractForm.display_name !== original.display_name &&
+      Object.keys(contractForm).every(field => field === 'display_name' || contractForm[field] === original[field]);
+    const payload = onlyNameChanged ? { display_name: contractForm.display_name } : contractForm;
 
     try {
       const response = await apiFetch(`/api/contracts${editing ? `/${editingContractId}` : ''}`, {
         method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(contractForm)
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) throw new Error(await readErrorResponse(response));
@@ -1176,7 +1208,7 @@ function App() {
       return;
     }
 
-    if (!window.confirm(`Archive contract ${contract.contract_id}? It will leave the active contract list but remain available in archived contracts and ticket history.`)) return;
+    if (!window.confirm(`Archive ${contractOptionLabel(contract)}? It will leave the active contract list but remain available in archived contracts and ticket history.`)) return;
 
     try {
       const response = await apiFetch(`/api/contracts/${contract.id}`, {
@@ -1450,7 +1482,7 @@ function App() {
     }));
   }
 
-  function clearHistoryFilters() {
+  function clearHistoryFilters(paymentStatus = '') {
     setHistoryFilters({
       search: '',
       date: '',
@@ -1458,7 +1490,7 @@ function App() {
       ticket_number: '',
       elevator: '',
       assignment_status: '',
-      payment_status: ''
+      payment_status: paymentStatus
     });
   }
 
@@ -1666,7 +1698,7 @@ function App() {
       if (selectedContract && ticketBushels > remainingBushels && remainingBushels > 0 && !overageResolution) {
         setContractOverage({
           contractId: selectedContract.id,
-          contractLabel: selectedContract.contract_id,
+          contractLabel: contractOptionLabel(selectedContract),
           buyer: selectedContract.buyer,
           appliedBushels: remainingBushels,
           overageBushels: ticketBushels - remainingBushels,
@@ -2103,6 +2135,18 @@ function App() {
             </div>
           </div>
 
+          <DashboardFeedback loading={dashboard.isPlaceholder} failed={dashboardLoadFailed} retry={() => loadDashboard()} />
+          {dashboard.isPlaceholder ? null : dashboard.grain_position ? (
+            <GrainPositionDashboard position={dashboard.grain_position} formatNumber={formatNumber} farmName={farm?.name || 'Your farm'}
+              openPaymentReview={() => {
+                clearHistoryFilters(PAYMENT_REVIEW_FILTER);
+                setActiveView('history');
+              }}
+              openView={view => {
+                setActiveView(view);
+                if (view === 'contracts') loadContracts({ ticketCounts: true });
+              }} />
+          ) : <>
           <div className="kpi-grid">
             <article className="kpi-card corn">
               <span>Total Corn Inventory</span>
@@ -2146,7 +2190,6 @@ function App() {
             </div>
             <div className="finance-grid">
               <article><span>Unpaid Delivered</span><strong>{formatNumber(dashboard.finance?.unpaid_delivered_bushels)} bu</strong></article>
-              <article><span>Unpaid Estimated</span><strong>{formatCurrency(dashboard.finance?.unpaid_estimated_dollars)}</strong></article>
               <article><span>Open Contract Balances</span><strong>{formatNumber(dashboard.finance?.contracts_with_remaining_bushels)}</strong></article>
               <article><span>Unassigned Tickets</span><strong>{formatNumber(dashboard.finance?.unassigned_tickets)}</strong></article>
             </div>
@@ -2319,15 +2362,16 @@ function App() {
               </>
             )}
           </section>
+          </>}
         </section>
       )}
 
       {isAdmin && activeView === 'history' && (
         <section className="history-panel">
           <div className="form-heading">
-            <h2>{showArchivedTickets ? 'Archived Ticket History' : 'Ticket History'}</h2>
+            <h2>{showArchivedTickets && !isPaymentReview ? 'Archived Ticket History' : 'Ticket History'}</h2>
             <p>
-              {showArchivedTickets
+              {isPaymentReview ? 'Review tickets marked Not paid or Partially paid across all crop years.' : showArchivedTickets
                 ? 'Review ticket logs from previous crop years. Ticket history archives automatically after August 31 each year.'
                 : 'Review saved ticket logs for the current crop year. Older tickets are kept in archived history.'}
             </p>
@@ -2340,7 +2384,7 @@ function App() {
                 type="text"
                 value={historyFilters.search}
                 onChange={(event) => updateHistoryFilter('search', event.target.value)}
-                placeholder="Ticket, bin, hauler, notes"
+                placeholder="Ticket, contract, bin, hauler, notes"
               />
             </label>
             <label className="field">
@@ -2392,6 +2436,7 @@ function App() {
               <span>Payment</span>
               <select value={historyFilters.payment_status} onChange={(event) => updateHistoryFilter('payment_status', event.target.value)}>
                 <option value="">All payments</option>
+                <option value={PAYMENT_REVIEW_FILTER}>Needs payment review</option>
                 <option>Not paid</option>
                 <option>Partially paid</option>
                 <option>Paid</option>
@@ -2400,7 +2445,7 @@ function App() {
           </div>
 
           <div className="history-actions">
-            <button
+            {!isPaymentReview && <button
               type="button"
               onClick={() => {
                 const next = !showArchivedTickets;
@@ -2409,11 +2454,11 @@ function App() {
               }}
             >
               {showArchivedTickets ? 'Show Current Ticket History' : 'Show Archived Ticket History'}
-            </button>
+            </button>}
             <button type="button" onClick={() => loadTicketHistory()} disabled={isLoadingHistory}>
               {isLoadingHistory ? 'Loading...' : 'Refresh History'}
             </button>
-            <button type="button" onClick={clearHistoryFilters}>
+            <button type="button" onClick={() => clearHistoryFilters()}>
               Clear Filters
             </button>
             <button type="button" onClick={exportTicketCsv}>
@@ -2422,7 +2467,7 @@ function App() {
           </div>
 
           <div className="history-count">
-            {ticketLogs.length} {showArchivedTickets ? 'archived' : 'current'} ticket logs
+            {ticketLogs.length} {isPaymentReview ? 'tickets to review' : `${showArchivedTickets ? 'archived' : 'current'} ticket logs`}
           </div>
 
           {editingTicket && (
@@ -2472,12 +2517,10 @@ function App() {
                       <option value="SPOT">Spot</option>
                     </select>
                     {assignment.type === 'CONTRACT' ? (
-                      <select value={assignment.contract_id} onChange={(event) => updateAssignment(index, 'contract_id', event.target.value)}>
-                        <option value="">Choose contract</option>
-                        {contracts.map((contract) => (
-                          <option key={contract.id} value={contract.id}>{contract.contract_id} · {contract.buyer}</option>
-                        ))}
-                      </select>
+                      <ContractPicker label="Apply to contract" value={assignment.contract_id}
+                        contracts={contracts.some(contract => contract.id === assignment.contract_id) || !contractLabels.has(assignment.contract_id)
+                          ? contracts : [...contracts, contractLabels.get(assignment.contract_id)]}
+                        onChange={value => updateAssignment(index, 'contract_id', value)} />
                     ) : <span className="spot-label">Spot grain</span>}
                     <input
                       inputMode="decimal"
@@ -2560,7 +2603,15 @@ function App() {
                       <td>{formatCurrency(log.price)}</td>
                       <td>{formatCurrency(log.revenue)}</td>
                       <td>{displayValue(log.hauled_by)}</td>
-                      <td><span className={`status-tag ${(log.assignment_status || 'Unassigned').toLowerCase()}`}>{log.assignment_status || 'Unassigned'}</span></td>
+                      <td>
+                        <span className={`status-tag ${(log.assignment_status || 'Unassigned').toLowerCase()}`}>{log.assignment_status || 'Unassigned'}</span>
+                        {assignedContractIds(log).map(id => contractLabels.get(id)).filter(Boolean).map(contract => (
+                          <div className="history-contract-name" key={contract.id}>
+                            <strong>{contractName(contract)}</strong>
+                            {contract.display_name && <small>{contract.contract_id}</small>}
+                          </div>
+                        ))}
+                      </td>
                       <td>
                         <button
                           className={`status-tag payment-toggle ${(log.payment_status || 'Not paid').toLowerCase().replaceAll(' ', '-')}`}
@@ -2602,8 +2653,13 @@ function App() {
           {!showArchivedContracts && <form className="contract-form" onSubmit={saveContract}>
             <div className="field-grid">
               <label className="field">
-                <span>Contract ID</span>
+                <span>Official Contract Number</span>
                 <input value={contractForm.contract_id} onChange={(event) => updateContractForm('contract_id', event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Contract Name <small>(optional)</small></span>
+                <input maxLength={100} placeholder="December Corn 1" value={contractForm.display_name}
+                  onChange={event => updateContractForm('display_name', event.target.value)} />
               </label>
               <label className="field">
                 <span>Buyer / Elevator</span>
@@ -2628,6 +2684,7 @@ function App() {
               <label className="field">
                 <span>Delivery Window / Month</span>
                 <input value={contractForm.delivery_window} onChange={(event) => updateContractForm('delivery_window', event.target.value)} placeholder="October 2026" />
+                <small className="field-help">For a single exact deadline, enter YYYY-MM-DD.</small>
               </label>
               <label className="field">
                 <span>Status</span>
@@ -2666,12 +2723,18 @@ function App() {
             </button>
           </div>
 
+          {contracts.length > 0 && <label className="field contract-search">
+            <span>Search contracts</span>
+            <input type="search" placeholder="Name, contract number, or buyer" value={contractSearch}
+              onChange={event => setContractSearch(event.target.value)} />
+          </label>}
           <div className="contract-grid">
-            {contracts.length === 0 ? (
+            {visibleContracts.length === 0 ? (
               <div className="premium-empty">
-                {showArchivedContracts ? 'No archived contracts yet.' : 'No contracts yet. Add the first contract above.'}
+                {contracts.length > 0 ? 'No contracts match your search.' :
+                  showArchivedContracts ? 'No archived contracts yet.' : 'No contracts yet. Add the first contract above.'}
               </div>
-            ) : contracts.map((contract) => {
+            ) : visibleContracts.map((contract) => {
               const progress = contract.contracted_bushels > 0
                 ? Math.min(100, (contract.delivered_applied_bushels / contract.contracted_bushels) * 100)
                 : 0;
@@ -2681,7 +2744,8 @@ function App() {
                   <div className="contract-head">
                     <div>
                       <span>{displayCrop(contract.commodity)} · {contract.status}</span>
-                      <h3>{contract.contract_id}</h3>
+                      <h3>{contractName(contract)}</h3>
+                      {contract.display_name && <span className="official-contract-number">Contract {contract.contract_id}</span>}
                       <p>{contract.buyer}</p>
                     </div>
                     <strong>{formatCurrency(contract.contract_price)} / bu</strong>
@@ -2698,7 +2762,8 @@ function App() {
                       const archived = isArchivedTicket(ticket);
                       setActiveView('history');
                       setShowArchivedTickets(archived);
-                      loadTicketHistory({ archived });
+                      if (isPaymentReview) clearHistoryFilters();
+                      else loadTicketHistory({ archived });
                       startEditingTicket(ticket);
                     }} />
                   <div className="inventory-actions">
@@ -3053,26 +3118,15 @@ function App() {
             </div>
 
             {scannerAssignment.status === 'Contract' && (
-              <label className="field contract-picker">
-                <span>Apply to Contract</span>
-                <select
-                  value={scannerAssignment.contractId}
-                  onChange={(event) => setScannerAssignment({
-                    status: 'Contract',
-                    contractId: event.target.value
-                  })}
-                >
-                  <option value="">Choose an outstanding contract</option>
-                  {outstandingContracts.map((contract) => (
-                    <option key={contract.id} value={contract.id}>
-                      {contract.contract_id} · {contract.buyer} · {formatNumber(contract.remaining_bushels)} bu remaining
-                    </option>
-                  ))}
-                </select>
+              <div>
+                <ContractPicker label="Apply to Contract" value={scannerAssignment.contractId}
+                  placeholder="Choose an outstanding contract" contracts={outstandingContracts}
+                  onChange={contractId => setScannerAssignment({ status: 'Contract', contractId })}
+                  detail={contract => `${formatNumber(contract.remaining_bushels)} bu remaining`} />
                 {outstandingContracts.length === 0 && (
                   <small className="field-help">No outstanding {ticket.crop || 'grain'} contracts are available.</small>
                 )}
-              </label>
+              </div>
             )}
           </fieldset>
 
@@ -3138,29 +3192,15 @@ function App() {
               </div>
 
               {contractOverage.destination === 'Contract' && (
-                <label className="field contract-picker">
-                  <span>Apply remaining bushels to</span>
-                  <select
-                    value={contractOverage.contractIdForOverage}
-                    onChange={(event) => setContractOverage((current) => ({
-                      ...current,
-                      contractIdForOverage: event.target.value
-                    }))}
-                  >
-                    <option value="">Choose another outstanding contract</option>
-                    {outstandingContracts
-                      .filter((contract) => (
-                        contract.id !== contractOverage.contractId
-                        && Number(contract.remaining_bushels) >= Number(contractOverage.overageBushels)
-                      ))
-                      .map((contract) => (
-                        <option key={contract.id} value={contract.id}>
-                          {contract.contract_id} · {contract.buyer} · {formatNumber(contract.remaining_bushels)} bu remaining
-                        </option>
-                      ))}
-                  </select>
+                <div>
+                  <ContractPicker label="Apply remaining bushels to" value={contractOverage.contractIdForOverage}
+                    placeholder="Choose another outstanding contract"
+                    contracts={outstandingContracts.filter(contract => contract.id !== contractOverage.contractId
+                      && Number(contract.remaining_bushels) >= Number(contractOverage.overageBushels))}
+                    onChange={contractIdForOverage => setContractOverage(current => ({ ...current, contractIdForOverage }))}
+                    detail={contract => `${formatNumber(contract.remaining_bushels)} bu remaining`} />
                   <small className="field-help">Only contracts with enough remaining bushels are shown.</small>
-                </label>
+                </div>
               )}
             </fieldset>
 

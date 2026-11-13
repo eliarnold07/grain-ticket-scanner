@@ -2476,6 +2476,49 @@ h3 {
 .applied-ticket-list li span { font-size: .875rem; }
 .applied-ticket-actions { justify-items: end; text-align: right; }
 .applied-tickets-more { width: 100%; margin-top: 8px; }
+
+.grain-position, .position-work { display: grid; gap: 16px; min-width: 0; }
+.position-work, .position-crops { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.position-crops { display: grid; gap: 12px; }
+.position-panel {
+  min-width: 0;
+  padding: clamp(16px, 2vw, 24px);
+  background: var(--paper, #fffdf8);
+  border: 1px solid var(--stone-200, #ded9cc);
+  border-radius: 16px;
+}
+.position-panel h2, .position-crop h3 { margin: 0; }
+.position-panel .section-title-row { flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.position-panel .section-title-row p { margin: 4px 0 0; color: var(--muted); }
+.position-panel .section-title-row button { min-height: 44px; }
+.position-crop { padding: 16px; border-radius: 12px; background: #f2f5eb; min-width: 0; }
+.position-crop dl {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; margin: 12px 0 0;
+}
+.position-payment { margin: 0; padding: 16px; border-radius: 12px; background: #f2f5eb; }
+.position-payment dd { font-size: clamp(1.5rem, 3vw, 2rem); }
+.position-panel dt { color: var(--muted); font-size: .86rem; }
+.position-panel dd { margin: 3px 0 0; font-weight: 750; font-size: clamp(1rem, 2vw, 1.3rem); overflow-wrap: anywhere; }
+.position-note { margin: 12px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.45; }
+.position-list { list-style: none; margin: 0; padding: 0; }
+.position-list li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px;
+  padding: 10px 0; border-top: 1px solid var(--stone-200, #ded9cc); overflow-wrap: anywhere;
+}
+.position-list li span { display: block; margin-top: 3px; font-size: .86rem; color: var(--muted); }
+.position-list li > strong { text-align: right; }
+.contract-search { max-width: 34rem; margin: 14px 0; }
+.contract-picked-name, .history-contract-name { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.contract-picked-name small, .history-contract-name small { color: var(--muted); font-weight: 400; }
+.history-contract-name { margin-top: 5px; }
+.contract-head .official-contract-number { display: block; margin: 4px 0; }
+.contract-picker { min-width: 0; }
+.contract-picker select { width: 100%; }
+
+@media (max-width: 740px) {
+  .position-work, .position-crops { grid-template-columns: minmax(0, 1fr); }
+  .position-panel .section-title-row button { width: 100%; }
+}
 input, select, textarea { scroll-margin-block: 90px; }
 @media (max-width: 719px) {
   .view-tabs button { font-size: .67rem; padding: 6px 2px; letter-spacing: 0; }

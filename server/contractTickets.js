@@ -1,5 +1,25 @@
 import { requireUuid, restQuery } from './restQuery.js';
 
+export function appliedContractBushels(tickets, invalidContracts) {
+  const applied = new Map();
+  for (const ticket of tickets) {
+    for (const allocation of Array.isArray(ticket.assignments) ? ticket.assignments : []) {
+      if (allocation?.type !== 'CONTRACT' || !allocation.contract_id) continue;
+      const raw = String(allocation.bushels ?? '').replace(/[$,]/g, '').trim();
+      const amount = Number(raw);
+      if (!raw || !Number.isFinite(amount) || amount < 0) invalidContracts?.add(allocation.contract_id);
+      if (Number.isFinite(amount)) applied.set(allocation.contract_id, (applied.get(allocation.contract_id) ?? 0) + amount);
+    }
+  }
+  return applied;
+}
+
+export function contractBalances(contract, applied) {
+  const delivered = applied.get(contract.id) ?? 0;
+  const total = Number(String(contract.contracted_bushels ?? '').replace(/[$,]/g, ''));
+  return { delivered_applied_bushels: delivered, remaining_bushels: Math.max(0, (Number.isFinite(total) ? total : 0) - delivered) };
+}
+
 function deliveryTime(ticket) {
   const time = Date.parse(ticket.date || '');
   return Number.isFinite(time) ? time : -Infinity;

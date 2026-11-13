@@ -7,6 +7,16 @@ import { readErrorResponse, cleanMessage, authErrorMessage } from '../src/apiErr
 import { settingsNamesRoutes } from '../server/settingsNamesRoutes.js';
 import { fetchWithTimeout } from '../src/network.js';
 import { farmPermissionGuard } from '../server/farmPermissions.js';
+import { requireSupabaseAuth } from '../server/supabaseStore.js';
+
+test('an unauthenticated request cannot reach the dashboard handler', async () => {
+  let status;
+  await requireSupabaseAuth({ path: '/dashboard', get: () => undefined }, {
+    status(code) { status = code; return this; },
+    json(body) { assert.match(body.error, /log in/); }
+  }, () => assert.fail('Unauthenticated dashboard handler ran'));
+  assert.equal(status, 401);
+});
 
 test('runtime farm permission middleware denies Employee management APIs, not just navigation', async () => {
   let role='employee'; const app=express();
@@ -15,7 +25,7 @@ test('runtime farm permission middleware denies Employee management APIs, not ju
   const server=app.listen(0,'127.0.0.1'); await once(server,'listening');
   const base=`http://127.0.0.1:${server.address().port}`;
   try {
-    for(const path of ['/users','/users/invitation','/locations','/drivers','/bins','/contracts','/contracts/00000000-0000-4000-8000-000000000001/tickets']) assert.equal((await fetch(base+'/api'+path)).status,403);
+    for(const path of ['/users','/users/invitation','/locations','/drivers','/bins','/dashboard?grain_position=true','/contracts','/contracts/00000000-0000-4000-8000-000000000001/tickets']) assert.equal((await fetch(base+'/api'+path)).status,403);
     for(const path of ['/session','/dropdowns','/account-deletion','/ticket-submissions/00000000-0000-4000-8000-000000000001']) assert.equal((await fetch(base+'/api'+path)).status,200);
     assert.equal((await fetch(base+'/api/ticket-submissions/invalid')).status,403);
     assert.equal((await fetch(base+'/api/ticket-submissions/00000000-0000-4000-8000-000000000001',{method:'DELETE'})).status,403);

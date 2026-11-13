@@ -46,6 +46,29 @@ test('sample dashboard reconciles with history and payment filters use exact sta
   assert.equal((await request(runtime, 'ticket-logs?archive_view=archived')).data.logs.length, 0);
 });
 
+test('redesigned dashboard agrees with filtered History before and after payment edits', async () => {
+  const runtime = await fresh();
+  const { data: { logs } } = await request(runtime, 'ticket-logs');
+  const expected = logs.filter(ticket => ['Not paid', 'Partially paid'].includes(ticket.payment_status));
+  assert.ok(expected.some(ticket => ticket.payment_status === 'Not paid'));
+  assert.ok(expected.some(ticket => ticket.payment_status === 'Partially paid'));
+
+  async function verifyReview(expectedLogs) {
+    const { data: { grain_position } } = await request(runtime, 'dashboard?grain_position=true');
+    const { data: history } = await request(runtime, 'ticket-logs?payment_status=needs_review');
+    assert.deepEqual(grain_position.payments, { ticket_count: expectedLogs.length });
+    assert.equal(history.count, expectedLogs.length);
+    assert.deepEqual(history.logs.map(ticket => ticket.id), expectedLogs.map(ticket => ticket.id));
+  }
+
+  await verifyReview(expected);
+  for (const ticket of expected) {
+    const result = await request(runtime, `ticket-logs/${ticket.id}`, { payment_status: 'Paid' }, 'PUT');
+    assert.equal(result.status, 200);
+  }
+  await verifyReview([]);
+});
+
 test('invalid demo submissions leave grain unchanged; valid saves reconcile history and inventory', async () => {
   const runtime = await fresh();
   const before = (await request(runtime, 'dashboard')).data.kpis;
@@ -73,6 +96,27 @@ test('demo contract counts reflect assignments and the full drill-down total', a
   }, 'PUT')).status, 200);
   assert.equal((await contracts()).find(c => c.id === 'contract-corn').applied_ticket_count, 8);
   assert.equal((await detail()).total_applied_bushels, 7150 - applied_bushels);
+});
+
+test('contract rename changes discovery labels while preserving ticket and inventory records', async () => {
+  const runtime = await fresh();
+  const initial = (await request(runtime, 'contracts')).data.contracts.find(c => c.id === 'contract-corn');
+  const drilldown = (await request(runtime, 'contracts/contract-corn/tickets')).data;
+  const bins = (await request(runtime, 'bins')).data;
+  const update = await request(runtime, 'contracts/contract-corn', { ...initial, display_name: 'Perdue Fall Corn' }, 'PUT');
+  assert.equal(update.status, 200);
+  const after = (await request(runtime, 'contracts/contract-corn/tickets')).data;
+  assert.deepEqual(after, drilldown);
+  assert.deepEqual((await request(runtime, 'bins')).data, bins);
+  const { display_name, ...legacy } = initial;
+  assert.equal((await request(runtime, 'contracts/contract-corn', legacy, 'PUT')).status, 200);
+  const candidates = (await request(runtime, 'scanner-contracts')).data.contracts;
+  assert.equal(candidates.find(c => c.id === 'contract-corn').display_name, 'Perdue Fall Corn');
+  for (const query of ['Perdue%20Fall%20Corn', 'C-2026-01']) {
+    const result = (await request(runtime, 'ticket-logs?contract_labels=true&search=' + query)).data;
+    assert.equal(result.logs.length, 9);
+    assert.equal(result.contract_labels.find(c => c.id === initial.id).display_name, 'Perdue Fall Corn');
+  }
 });
 
 test('demo adjustments share production capacity behavior and reset with a fresh session', async () => {

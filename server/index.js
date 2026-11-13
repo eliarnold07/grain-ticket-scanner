@@ -33,10 +33,13 @@ import {
   getInventorySnapshot,
   getAccountDeletionPreview,
   getTicketLogSnapshot,
+  getContractAllocationSnapshot,
   listBins,
   listContracts,
   listContractTickets,
   listContractTicketCounts,
+  getGrainPosition,
+  getTicketContractLabels,
   listDrivers,
   listLocations,
   listFarmUsers,
@@ -279,8 +282,7 @@ async function validateTicketAccounting(input) {
   }
 
   if (contractAssignments.length > 0) {
-    const ticketLogs = await getTicketLogSnapshot();
-    const contracts = await listContracts(ticketLogs, { includeAll: true });
+    const contracts = await listContracts(null, { includeAll: true });
     const contractIds = new Set(contracts.map((contract) => contract.id));
 
     if (contractAssignments.some((assignment) => !contractIds.has(assignment.contract_id))) {
@@ -408,6 +410,10 @@ app.get('/api/dropdowns', async (_req, res) => {
 
 app.get('/api/dashboard', async (_req, res) => {
   try {
+    if (_req.query.grain_position === 'true') {
+      res.set('Cache-Control', 'no-store');
+      return res.json({ grain_position: await getGrainPosition() });
+    }
     const [inventory, ticketLogs] = await Promise.all([
       getInventorySnapshot(),
       getTicketLogSnapshot()
@@ -493,6 +499,7 @@ app.get('/api/dashboard', async (_req, res) => {
 
 app.get('/api/ticket-logs', async (req, res) => {
   try {
+    const labels = req.query.contract_labels === 'true' ? await getTicketContractLabels() : null;
     const logs = await listTicketLogs({
       archive_view: req.query.archive_view,
       search: req.query.search,
@@ -503,11 +510,12 @@ app.get('/api/ticket-logs', async (req, res) => {
       scanned_by: req.query.scanned_by,
       assignment_status: req.query.assignment_status,
       payment_status: req.query.payment_status
-    });
+    }, labels || []);
 
     res.json({
       logs,
-      count: logs.length
+      count: logs.length,
+      ...(labels ? { contract_labels: labels } : {})
     });
   } catch (error) {
     logError('Ticket log fetch failed', error);
@@ -580,8 +588,7 @@ app.get('/api/contracts/:id/tickets', async (req, res) => {
 
 app.get('/api/scanner-contracts', async (_req, res) => {
   try {
-    const ticketLogs = await getTicketLogSnapshot();
-    const contracts = await listContracts(ticketLogs);
+    const contracts = await listContracts();
     const availableContracts = contracts
       .filter((contract) => {
         const status = String(contract.status || '').toLowerCase();
@@ -590,6 +597,7 @@ app.get('/api/scanner-contracts', async (_req, res) => {
       .map((contract) => ({
         id: contract.id,
         contract_id: contract.contract_id,
+        ...(contract.display_name ? { display_name: contract.display_name } : {}),
         buyer: contract.buyer,
         commodity: contract.commodity,
         remaining_bushels: contract.remaining_bushels,
@@ -641,8 +649,7 @@ app.post('/api/users/repair', async (req, res) => {
 
 app.post('/api/contracts', async (req, res) => {
   try {
-    const ticketLogs = await getTicketLogSnapshot();
-    res.status(201).json({ contract: await createContract(req.body || {}, ticketLogs) });
+    res.status(201).json({ contract: await createContract(req.body || {}) });
   } catch (error) {
     logError('Contract create failed', error);
     res.status(400).json({ error: 'Could not create contract.', detail: error.message });
@@ -651,7 +658,7 @@ app.post('/api/contracts', async (req, res) => {
 
 app.put('/api/contracts/:id', async (req, res) => {
   try {
-    const ticketLogs = await getTicketLogSnapshot();
+    const ticketLogs = await getContractAllocationSnapshot();
     res.json({ contract: await updateContract(req.params.id, req.body || {}, ticketLogs) });
   } catch (error) {
     logError('Contract update failed', error);
@@ -661,7 +668,7 @@ app.put('/api/contracts/:id', async (req, res) => {
 
 app.delete('/api/contracts/:id', async (req, res) => {
   try {
-    const ticketLogs = await getTicketLogSnapshot();
+    const ticketLogs = await getContractAllocationSnapshot();
     await deleteContract(req.params.id, ticketLogs);
     res.json({ ok: true });
   } catch (error) {

@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { isArchivedTicket } from './archivePolicy.js';
 import { AccountDeletionError, performAccountDeletion } from './accountDeletionService.js';
 import { clampBinBalance } from './binCapacity.js';
-import { readContractTicketCounts, readContractTickets } from './contractTickets.js';
+import { appliedContractBushels, contractBalances, readContractTicketCounts, readContractTickets } from './contractTickets.js';
+import { assignedContractIds, contractMatches, contractNamePatch } from '../src/contractNames.js';
+import { buildGrainPosition } from './grainPosition.js';
+import { needsPaymentReview, PAYMENT_REVIEW_FILTER, PAYMENT_REVIEW_STATUSES } from '../src/paymentReview.js';
 import { canonicalRestPath, requireUuid, restQuery } from './restQuery.js';
 
 const requestContext = new AsyncLocalStorage();
@@ -166,6 +169,38 @@ async function db(path, options = {}) {
     token: context().token,
     serviceRole: Boolean(supabaseServiceRoleKey)
   });
+}
+
+async function readFarmRows(table, select, filters = {}) {
+  const { farmId } = context();
+  const rows = [];
+  let afterId;
+  while (true) {
+    const page = await db(restQuery(table, {
+      ...filters, select, farm_id: `eq.${farmId}`, order: 'id.asc', limit: 250,
+      and: afterId ? `(id.gt.${afterId})` : undefined
+    }));
+    if (page.length === 0) return rows;
+    rows.push(...page);
+    afterId = requireUuid(page.at(-1).id);
+  }
+}
+
+export async function getGrainPosition() {
+  const now = new Date();
+  const since = new Date(+now - 7 * 86_400_000).toISOString();
+  const [bins, contracts, tickets, transactions] = await Promise.all([
+    readFarmRows('bins', 'id,bin_name,crop_type,current_bushels,estimated_capacity_bushels'),
+    readFarmRows('contracts', '*'),
+    readFarmRows('tickets', 'id,assignments,payment_status,created_at,ticket_number,crop,bushels'),
+    readFarmRows('inventory_transactions', 'id,bin_id,transaction_type,crop_type,previous_bin_balance,new_bin_balance,created_at', { created_at: `gte.${since}` })
+  ]);
+  return buildGrainPosition({ bins, contracts, tickets, transactions, now });
+}
+
+export async function getTicketContractLabels() {
+  return (await readFarmRows('contracts', '*')).map(({ id, contract_id, display_name, buyer }) =>
+    ({ id, contract_id, display_name, buyer }));
 }
 
 export async function listFarmUsers() {
@@ -534,10 +569,12 @@ export async function updateTicketLog(id, input) {
   }
 }
 
-export async function getTicketLogSnapshot() {
+export async function getTicketLogSnapshot({ paymentReview = false } = {}) {
   const { farmId } = context();
   const [tickets, users] = await Promise.all([
-    db(`tickets?select=*&farm_id=eq.${farmId}&order=created_at.desc`),
+    paymentReview
+      ? readFarmRows('tickets', '*', { payment_status: `in.(${PAYMENT_REVIEW_STATUSES.join(',')})` })
+      : db(`tickets?select=*&farm_id=eq.${farmId}&order=created_at.desc`),
     db(`farm_accounts?select=user_id,display_name,email&farm_id=eq.${farmId}`)
   ]);
   const userNames = new Map(users.map((user) => [
@@ -545,27 +582,30 @@ export async function getTicketLogSnapshot() {
     clean(user.display_name) || clean(user.email) || 'Farm user'
   ]));
 
+  if (paymentReview) tickets.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   return tickets.map((ticket) => ({
     ...ticket,
     scanned_by_name: userNames.get(ticket.scanned_by_user_id) || clean(ticket.scanned_by_name) || 'Farm user'
   }));
 }
 
-export async function listTicketLogs(filters = {}) {
-  const logs = await getTicketLogSnapshot();
+export async function listTicketLogs(filters = {}, contractLabels = []) {
+  const paymentReview = filters.payment_status === PAYMENT_REVIEW_FILTER;
+  const logs = await getTicketLogSnapshot({ paymentReview });
   const search = clean(filters.search).toLowerCase();
+  const matchingContracts = new Set(search ? contractLabels.filter(contract => contractMatches(contract, search)).map(contract => contract.id) : []);
   return logs.filter((log) => {
     const archived = isArchivedTicket(log);
-    if (filters.archive_view === 'archived' && !archived) return false;
-    if (filters.archive_view !== 'archived' && archived) return false;
+    if (!paymentReview && archived !== (filters.archive_view === 'archived')) return false;
     if (filters.crop && clean(log.crop).toLowerCase() !== clean(filters.crop).toLowerCase()) return false;
     if (filters.date && !clean(log.date).toLowerCase().includes(clean(filters.date).toLowerCase())) return false;
     if (filters.ticket_number && !clean(log.ticket_number).toLowerCase().includes(clean(filters.ticket_number).toLowerCase())) return false;
     if (filters.elevator && !clean(log.delivered_to).toLowerCase().includes(clean(filters.elevator).toLowerCase())) return false;
     if (filters.scanned_by && !clean(log.scanned_by_name).toLowerCase().includes(clean(filters.scanned_by).toLowerCase())) return false;
     if (filters.assignment_status && log.assignment_status !== filters.assignment_status) return false;
-    if (filters.payment_status && log.payment_status !== filters.payment_status) return false;
-    return !search || Object.values(log).some((value) => clean(value).toLowerCase().includes(search));
+    if (paymentReview ? !needsPaymentReview(log.payment_status) : filters.payment_status && log.payment_status !== filters.payment_status) return false;
+    return !search || Object.values(log).some((value) => clean(value).toLowerCase().includes(search))
+      || assignedContractIds(log).some(id => matchingContracts.has(id));
   });
 }
 
@@ -584,25 +624,19 @@ export function listContractTicketCounts() {
   return readContractTicketCounts(db, context().farmId);
 }
 
-function contractWithBalances(contract, tickets) {
-  const delivered = tickets.reduce((total, ticket) => total + (ticket.assignments || []).reduce((sum, assignment) => (
-    assignment.type === 'CONTRACT' && assignment.contract_id === contract.id ? sum + numeric(assignment.bushels) : sum
-  ), 0), 0);
-  return {
-    ...contract,
-    delivered_applied_bushels: delivered,
-    remaining_bushels: Math.max(0, numeric(contract.contracted_bushels) - delivered)
-  };
+export function getContractAllocationSnapshot() {
+  return readFarmRows('tickets', 'id,assignments');
 }
 
 export async function listContracts(ticketLogs = null, options = {}) {
-  const { farmId } = context();
   const [contracts, tickets] = await Promise.all([
-    db(`contracts?select=*&farm_id=eq.${farmId}&order=contract_id.asc`),
-    ticketLogs ? Promise.resolve(ticketLogs) : getTicketLogSnapshot()
+    readFarmRows('contracts', '*'),
+    ticketLogs ? Promise.resolve(ticketLogs) : getContractAllocationSnapshot()
   ]);
+  const applied = appliedContractBushels(tickets);
   return contracts
-    .map((contract) => contractWithBalances(contract, tickets))
+    .sort((a, b) => a.contract_id.localeCompare(b.contract_id))
+    .map((contract) => ({ ...contract, ...contractBalances(contract, applied) }))
     .filter((contract) => {
       if (options.includeAll) return true;
       const archived = clean(contract.status).toLowerCase() === 'archived';
@@ -618,6 +652,7 @@ export async function createContract(input, ticketLogs = []) {
     body: {
       farm_id: farmId,
       contract_id: clean(input.contract_id),
+      ...contractNamePatch(input),
       buyer: clean(input.buyer),
       commodity: clean(input.commodity),
       contracted_bushels: numeric(input.contracted_bushels),
@@ -627,28 +662,33 @@ export async function createContract(input, ticketLogs = []) {
       notes: clean(input.notes)
     }
   });
-  return contractWithBalances(rows[0], ticketLogs);
+  return { ...rows[0], ...contractBalances(rows[0], appliedContractBushels(ticketLogs)) };
 }
 
 export async function updateContract(id, input, ticketLogs = []) {
   const { farmId } = context();
-  const rows = await db(`contracts?id=eq.${id}&farm_id=eq.${farmId}`, {
+  const name = contractNamePatch(input);
+  const changes = Object.hasOwn(name, 'display_name') && Object.keys(input).length === 1 ? name : {
+    contract_id: clean(input.contract_id),
+    ...name,
+    buyer: clean(input.buyer),
+    commodity: clean(input.commodity),
+    contracted_bushels: numeric(input.contracted_bushels),
+    contract_price: numeric(input.contract_price),
+    delivery_window: clean(input.delivery_window),
+    status: clean(input.status) || 'Open',
+    notes: clean(input.notes)
+  };
+  const rows = await db(restQuery('contracts', { id: `eq.${requireUuid(id)}`, farm_id: `eq.${farmId}` }), {
     method: 'PATCH',
     prefer: 'return=representation',
     body: {
-      contract_id: clean(input.contract_id),
-      buyer: clean(input.buyer),
-      commodity: clean(input.commodity),
-      contracted_bushels: numeric(input.contracted_bushels),
-      contract_price: numeric(input.contract_price),
-      delivery_window: clean(input.delivery_window),
-      status: clean(input.status) || 'Open',
-      notes: clean(input.notes),
+      ...changes,
       updated_at: new Date().toISOString()
     }
   });
   if (!rows[0]) throw new Error('Contract not found.');
-  return contractWithBalances(rows[0], ticketLogs);
+  return { ...rows[0], ...contractBalances(rows[0], appliedContractBushels(ticketLogs)) };
 }
 
 export async function deleteContract(id, ticketLogs = []) {
