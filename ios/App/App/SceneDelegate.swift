@@ -12,15 +12,29 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window?.rootViewController = BinFlowBridgeViewController()
         window?.makeKeyAndVisible()
 
-        SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
+        self.scene(scene, openURLContexts: connectionOptions.urlContexts)
+        for userActivity in connectionOptions.userActivities {
+            self.scene(scene, continue: userActivity)
+        }
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-        SceneDelegateProxy.shared.scene(scene, openURLContexts: URLContexts)
+        for context in URLContexts {
+            var options: [UIApplication.OpenURLOptionsKey: Any] = [
+                .openInPlace: context.options.openInPlace
+            ]
+            options[.sourceApplication] = context.options.sourceApplication
+            options[.annotation] = context.options.annotation
+            _ = ApplicationDelegateProxy.shared.application(
+                UIApplication.shared, open: context.url, options: options
+            )
+        }
     }
 
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
-        SceneDelegateProxy.shared.scene(scene, continue: userActivity)
+        _ = ApplicationDelegateProxy.shared.application(
+            UIApplication.shared, continue: userActivity, restorationHandler: { _ in }
+        )
     }
 }
 
