@@ -28,6 +28,8 @@
 	<string>BinFlow uses the camera so you can capture grain ticket photos for review and OCR.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>BinFlow lets you choose grain ticket photos from your photo library for review and OCR.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Allow BinFlow to save grain ticket photos to your photo library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
